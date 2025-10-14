@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from torch.nn import CrossEntropyLoss
 from torch.optim import Adam, SGD
-from torch.nn.functional import one_hot
+from torch.nn.functional import one_hot, softmax
 from sharded import sizeOfShard, getShardHash, fetchShardBatch, fetchTestBatch
 import os
 from glob import glob
