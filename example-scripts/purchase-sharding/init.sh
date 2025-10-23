@@ -6,7 +6,7 @@ IFS=$'\n\t'
 shards=$1
     
 if [[ ! -d "containers" ]] ; then
-    mkdir "containers/"
+    mkdir "containers"
     mkdir "containers/${shards}"
     mkdir "containers/${shards}/cache"
     mkdir "containers/${shards}/times"
