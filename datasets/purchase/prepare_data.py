@@ -23,9 +23,7 @@ if not os.path.exists(f'purchase{num_class}_train.npy'):
     np.save(f'purchase{num_class}_test.npy', {'X': X_test, 'y': y_test})
 
 # Cập nhật file dataset
-dataset_path = "datasets/purchase/datasetfile"
-
-if not os.path.exists(dataset_path):
+if not os.path.exists("datasetfile"):
     dataset_info = {
         "nb_train": len(X_train),
         "nb_test": len(X_test),
@@ -34,5 +32,5 @@ if not os.path.exists(dataset_path):
         "dataloader": "dataloader"
     }
 
-    with open(dataset_path, "w") as f:
+    with open("datasetfile", "w") as f:
         json.dump(dataset_info, f, indent=4)

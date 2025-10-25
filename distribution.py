@@ -45,7 +45,7 @@ if args.shards != None:
                 for t in range(1, args.shards)
             ],
         )
-        np.save("containers/{}/splitfile.npy".format(args.container), np.array(partition, dtype=object))
+        np.save("containers/{}/splitfile.npy".format(args.container), partition)
         requests = np.array([[] for _ in range(args.shards)])
         np.save(
             "containers/{}/requestfile:{}.npy".format(args.container, args.label),
@@ -146,7 +146,7 @@ if args.shards != None:
                 )
 
             # Generate splitfile and empty request file.
-            np.save("containers/{}/splitfile.npy".format(args.container),  np.array(partition, dtype=object))
+            np.save("containers/{}/splitfile.npy".format(args.container), partition)
             requests = np.array([[] for _ in range(partition.shape[0])])
             np.save(
                 "containers/{}/requestfile:{}.npy".format(args.container, args.label),
