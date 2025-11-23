@@ -172,7 +172,8 @@ if args.train:
 
                 # Mark model as loaded for next slices.
                 loaded = True
-
+            
+            ### CẦN TỐI ƯU
             # If this is the first slice, no need to load anything.
             elif sl == 0:
                 loaded = True
@@ -267,6 +268,7 @@ if args.train:
             ) as f:
                 f.write("{}\n".format(train_time + elapsed_time))
 
+            ### CẦN TỐI ƯU
             # Remove previous checkpoint.
             if os.path.exists(
                 "containers/{}/cache/{}_{}.pt".format(

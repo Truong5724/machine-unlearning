@@ -22,6 +22,7 @@ parser.add_argument(
     default="uniform",
     help="Assumed distribution when used with --shards, sampling distribution when used with --requests. Use 'reset' to reset requestfile, default uniform",
 )
+parser.add_argument("--algo", help='PLS-GAP algorithm parameter, format: "<key>:<value>"')
 parser.add_argument("--container", default="default", help="Name of the container")
 parser.add_argument(
     "--dataset",
@@ -54,7 +55,6 @@ if args.shards != None:
 
     # Else run PLS-GAP algorithm to find a low cost split.
     else:
-
         def mass(index):
             if args.distribution.split(":")[0] == "exponential":
                 lbd = (
@@ -71,6 +71,7 @@ if args.shards != None:
                 )
                 return a / ((index + 1) ** (a + 1))
 
+        ### CẦN TỐI ƯU
         if args.shards != None:
             # Initialize queue and partition.
             weights = mass(np.arange(0, datasetfile["nb_train"]))
