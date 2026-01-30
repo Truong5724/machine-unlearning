@@ -8,5 +8,5 @@ __pycache__/
 *.npy
 containers
 datasets/celebA
-datasets/CIFAR-10/cifar-10-batches-py/data_batch_*
-datasets/CIFAR-10/cifar-10-batches-py/test_batch
+datasets/CIFAR-10/cifar-10-batches-py
+datasets/CIFAR-10/cifar-10-python.tar.gz
