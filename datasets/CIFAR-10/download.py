@@ -1,4 +1,4 @@
-### TẢI TẬP DỮ LIỆU CIFAR-10
+### TẢI TẬP DỮ LIỆU CIFAR-10 VỀ MÁY ###
 
 import torchvision
 import torchvision.transforms as transforms
