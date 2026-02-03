@@ -2,7 +2,6 @@ import os
 import json
 import numpy as np
 import pickle
-from sklearn.model_selection import train_test_split
 
 # Hàm đọc 1 batch, trả về (data, labels)
 def load_cifar_batch(filename):
@@ -26,25 +25,28 @@ for i in range(1, 6):
 all_images = np.concatenate(all_images, axis=0) # (50000, 3, 32, 32)
 all_labels = np.concatenate(all_labels, axis=0) # (50000, )
 
-# Đếm số lượng lớp 
-num_class = np.unique(all_labels).shape[0] # 10 lớp
+# Số lượng lớp 
+num_class = 10 # np.unique(all_labels).shape[0] (nếu muốn chắc chắn)
+
+# Tải dữ liệu test
+test_images, test_labels = load_cifar_batch(f"cifar-10-batches-py/test_batch")
+
+if not os.path.exists(f'cifar{num_class}_train.npy'):
+    np.save(f'cifar{num_class}_train.npy', {'X': all_images, 'y': all_labels})
 
 # Lưu vào file
-if (not os.path.exists(f'cifar{num_class}_train.npy') 
-    or not os.path.exists(f'cifar{num_class}_test.npy')):
-    X_train, X_test, y_train, y_test = train_test_split(all_images, all_labels, test_size=0.2)
-    np.save(f'cifar{num_class}_train.npy', {'X': X_train, 'y': y_train})
-    np.save(f'cifar{num_class}_test.npy', {'X': X_test, 'y': y_test})
+if not os.path.exists(f'cifar{num_class}_test.npy'):
+    np.save(f'cifar{num_class}_test.npy', {'X': test_images, 'y': np.array(test_labels)})
 
-    # Cập nhật file dataset
-    if not os.path.exists("datasetfile"):
-        dataset_info = {
-            "nb_train": len(X_train),
-            "nb_test": len(X_test),
-            "input_shape": X_train.shape[1:],
-            "nb_classes": num_class,
-            "dataloader": "dataloader"
-        }
+# Cập nhật file dataset
+if not os.path.exists("datasetfile"):
+    dataset_info = {
+        "nb_train": len(all_images),
+        "nb_test": len(test_images),
+        "input_shape": all_images.shape[1:],
+        "nb_classes": num_class,
+        "dataloader": "dataloader"
+    }
 
-        with open("datasetfile", "w") as f:
-            json.dump(dataset_info, f, indent=4)
+    with open("datasetfile", "w") as f:
+        json.dump(dataset_info, f, indent=4)

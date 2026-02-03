@@ -8,7 +8,7 @@ import os
 from glob import glob
 from time import time
 import json
-
+from tqdm import tqdm
 import argparse
 
 parser = argparse.ArgumentParser()
@@ -112,7 +112,7 @@ if args.train:
     )
     loaded = False
 
-    for sl in range(args.slices):
+    for sl in tqdm(range(args.slices)):
         # Get slice hash using sharded lib.
         slice_hash = getShardHash(
             args.container, args.label, args.shard, until=(sl + 1) * slice_size
@@ -181,7 +181,7 @@ if args.train:
             # Actual training.
             train_time = 0.0
 
-            for epoch in range(start_epoch, slice_epochs):
+            for epoch in tqdm(range(start_epoch, slice_epochs)):
                 epoch_start_time = time()
 
                 for images, labels in fetchShardBatch(

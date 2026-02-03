@@ -15,7 +15,6 @@ fi
 
 python distribution.py --shards "${shards}" --distribution uniform --container "cifar10" --dataset datasets/CIFAR-10/datasetfile --label 0
 
-for j in {1..15}; do
-    r=$((${j}*${shards}/5))
-    python distribution.py --requests "${r}" --distribution uniform --container "cifar10" --dataset datasets/CIFAR-10/datasetfile --label "${r}"
+for j in 50 100 500; do # Với 3 trường hợp số lượng unlearning requests là 50, 100 và 500
+    python distribution.py --requests "${j}" --distribution uniform --container "cifar10" --dataset datasets/CIFAR-10/datasetfile --label "${j}"
 done
