@@ -1,2 +1,3 @@
 nb_shards,nb_requests,accuracy,retraining_time
 1,0,0.6216,42088.46464300156
+1,0,0.6479,1006.3735258579254
