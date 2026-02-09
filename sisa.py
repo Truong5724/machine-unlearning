@@ -10,6 +10,7 @@ from time import time
 import json
 from tqdm import tqdm
 import argparse
+import torchvision.transforms as T
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -73,6 +74,10 @@ parser.add_argument(
     default="latest",
     help="Label to be used on simlinks and outputs, default latest",
 )
+parser.add_argument(
+    "--image_dataset", action="store_true", help="Turn on augmentation and normalization, only in image dataset"
+)
+
 args = parser.parse_args()
 
 # Import the architecture.
@@ -100,10 +105,23 @@ loss_fn = CrossEntropyLoss()
 if args.optimizer == "adam":
     optimizer = Adam(model.parameters(), lr=args.learning_rate)
 elif args.optimizer == "sgd":
-    optimizer = SGD(model.parameters(), lr=args.learning_rate)
+    optimizer = SGD(model.parameters(), lr=args.learning_rate, momentum=0.9)
 else:
     raise "Unsupported optimizer"
 
+if args.image_dataset: 
+    # Images augmentation config 
+    train_transform = T.Compose([
+        T.RandomCrop(32, padding=4),
+        T.RandomHorizontalFlip(),
+    ])
+
+    # Images normalization config
+    normalize = T.Normalize(
+        mean=[0.4914, 0.4822, 0.4465],
+        std=[0.2023, 0.1994, 0.2010]
+    ) 
+    
 if args.train:
     shard_size = sizeOfShard(args.container, args.shard)
     slice_size = shard_size // args.slices
@@ -192,11 +210,16 @@ if args.train:
                     args.dataset,
                     until=(sl + 1) * slice_size if sl < args.slices - 1 else None,
                 ):
-
                     # Convert data to torch format and send to selected device.
-                    gpu_images = torch.from_numpy(images).to(
-                        device
-                    )  # pylint: disable=no-member
+                    gpu_images = torch.from_numpy(images).float() 
+                    if args.image_dataset: 
+                        # Augmentation + Normalization
+                        gpu_images = torch.stack([
+                            train_transform(img) for img in gpu_images
+                        ])
+                        gpu_images = normalize(gpu_images)
+
+                    gpu_images = gpu_images.to(device)
                     gpu_labels = torch.from_numpy(labels).to(
                         device
                     )  # pylint: disable=no-member
@@ -340,7 +363,11 @@ if args.test:
     outputs = np.empty((0, nb_classes))
     for images, _ in fetchTestBatch(args.dataset, args.batch_size):
         # Convert data to torch format and send to selected device.
-        gpu_images = torch.from_numpy(images).to(device)  # pylint: disable=no-member
+        gpu_images = torch.from_numpy(images).float()
+        if args.image_dataset: 
+            # Only normalization 
+            gpu_images = normalize(gpu_images)
+        gpu_images = gpu_images.to(device)  # pylint: disable=no-member
 
         if args.output_type == "softmax":
             # Actual batch prediction.

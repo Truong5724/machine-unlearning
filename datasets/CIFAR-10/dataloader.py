@@ -9,9 +9,9 @@ test_data = np.load(os.path.join(pwd, 'cifar10_test.npy'), allow_pickle=True)
 train_data = train_data.reshape((1,))[0]
 test_data = test_data.reshape((1,))[0]
 
-X_train = train_data['X'].astype(np.float32)
-X_test = test_data['X'].astype(np.float32)
-y_train = train_data['y'].astype(np.int64)
+X_train = train_data['X'].astype(np.float32) / 255.0
+X_test = test_data['X'].astype(np.float32) / 255.0
+y_train = train_data['y'].astype(np.int64) 
 y_test = test_data['y'].astype(np.int64)
 
 def load(indices, category='train'):
