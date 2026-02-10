@@ -75,7 +75,7 @@ parser.add_argument(
     help="Label to be used on simlinks and outputs, default latest",
 )
 parser.add_argument(
-    "--image_dataset", action="store_true", help="Turn on augmentation and normalization, only in image dataset"
+    "--image_dataset", action="store_true", help="Turn on augmentation, only in image dataset"
 )
 
 args = parser.parse_args()
@@ -105,22 +105,24 @@ loss_fn = CrossEntropyLoss()
 if args.optimizer == "adam":
     optimizer = Adam(model.parameters(), lr=args.learning_rate)
 elif args.optimizer == "sgd":
-    optimizer = SGD(model.parameters(), lr=args.learning_rate, momentum=0.9)
+    optimizer = SGD(model.parameters(), lr=args.learning_rate, momentum=0.9, weight_decay=1e-4)
 else:
     raise "Unsupported optimizer"
+
+scheduler = torch.optim.lr_scheduler.MultiStepLR(
+    optimizer,
+    milestones=[20, 50, 80],
+    gamma=0.1
+)
 
 if args.image_dataset: 
     # Images augmentation config 
     train_transform = T.Compose([
-        T.RandomCrop(32, padding=4),
         T.RandomHorizontalFlip(),
+        T.RandomRotation(15), 
+        T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2), 
+        T.RandomResizedCrop(size=input_shape[1:], scale=(0.8, 1.0))
     ])
-
-    # Images normalization config
-    normalize = T.Normalize(
-        mean=[0.4914, 0.4822, 0.4465],
-        std=[0.2023, 0.1994, 0.2010]
-    ) 
     
 if args.train:
     shard_size = sizeOfShard(args.container, args.shard)
@@ -202,6 +204,10 @@ if args.train:
             for epoch in tqdm(range(start_epoch, slice_epochs)):
                 epoch_start_time = time()
 
+                correct = 0
+                total = 0
+                running_loss = 0.0
+
                 for images, labels in fetchShardBatch(
                     args.container,
                     args.label,
@@ -211,15 +217,15 @@ if args.train:
                     until=(sl + 1) * slice_size if sl < args.slices - 1 else None,
                 ):
                     # Convert data to torch format and send to selected device.
-                    gpu_images = torch.from_numpy(images).float() 
+                    gpu_images = torch.from_numpy(images)
                     if args.image_dataset: 
-                        # Augmentation + Normalization
+                        # Augmentation 
                         gpu_images = torch.stack([
                             train_transform(img) for img in gpu_images
                         ])
-                        gpu_images = normalize(gpu_images)
 
                     gpu_images = gpu_images.to(device)
+
                     gpu_labels = torch.from_numpy(labels).to(
                         device
                     )  # pylint: disable=no-member
@@ -236,6 +242,17 @@ if args.train:
                     optimizer.step()
 
                     train_time += time() - forward_start_time
+
+                    # Real-time displaying
+                    running_loss += loss.item()
+                    preds = torch.argmax(logits, dim=1)
+                    correct += (preds == gpu_labels).sum().item()
+                    total += gpu_labels.size(0)
+
+                train_acc = 100 * correct / total
+
+                print(f" [Epoch {epoch+1}] - Loss: {running_loss:.4f} - Acc: {train_acc:.2f}%")
+                scheduler.step()
 
                 # Create a checkpoint every chkpt_interval.
                 if (
@@ -363,11 +380,7 @@ if args.test:
     outputs = np.empty((0, nb_classes))
     for images, _ in fetchTestBatch(args.dataset, args.batch_size):
         # Convert data to torch format and send to selected device.
-        gpu_images = torch.from_numpy(images).float()
-        if args.image_dataset: 
-            # Only normalization 
-            gpu_images = normalize(gpu_images)
-        gpu_images = gpu_images.to(device)  # pylint: disable=no-member
+        gpu_images = torch.from_numpy(images).to(device)  # pylint: disable=no-member
 
         if args.output_type == "softmax":
             # Actual batch prediction.

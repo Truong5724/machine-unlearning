@@ -44,7 +44,7 @@ class Model(nn.Module):
     def __init__(self, input_shape, nb_classes, *args, **kwargs):
         depth = 22
         widen_factor = 4
-        dropout_rate = kwargs['dropout_rate'] if 'dropout_rate' in kwargs.keys() else 0.0
+        dropout_rate = kwargs['dropout_rate'] if 'dropout_rate' in kwargs.keys() else 0.4
         num_classes = nb_classes
 
         super(Model, self).__init__()
