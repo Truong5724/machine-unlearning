@@ -11,6 +11,7 @@ import json
 from tqdm import tqdm
 import argparse
 import torchvision.transforms as T
+from torchvision.models import ResNet50_Weights
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -74,15 +75,11 @@ parser.add_argument(
     default="latest",
     help="Label to be used on simlinks and outputs, default latest",
 )
-parser.add_argument(
-    "--image_dataset", action="store_true", help="Turn on augmentation, only in image dataset"
-)
 
 args = parser.parse_args()
 
 # Import the architecture.
 from importlib import import_module
-
 model_lib = import_module("architectures.{}".format(args.model))
 
 # Retrive dataset metadata.
@@ -97,7 +94,11 @@ device = torch.device(
 )  # pylint: disable=no-member
 
 # Instantiate model and send to selected device.
-model = model_lib.Model(input_shape, nb_classes, dropout_rate=args.dropout_rate)
+if args.model == 'cifar10':
+    model = model_lib.Model(nb_classes)
+else:
+    model = model_lib.Model(input_shape, nb_classes, dropout_rate=args.dropout_rate)
+    
 model.to(device)
 
 # Instantiate loss and optimizer.
@@ -108,22 +109,27 @@ elif args.optimizer == "sgd":
     optimizer = SGD(model.parameters(), lr=args.learning_rate, momentum=0.9, weight_decay=1e-4)
 else:
     raise "Unsupported optimizer"
-
-scheduler = torch.optim.lr_scheduler.MultiStepLR(
-    optimizer,
-    milestones=[20, 50, 80],
-    gamma=0.1
-)
-
-if args.image_dataset: 
-    # Images augmentation config 
-    train_transform = T.Compose([
-        T.RandomHorizontalFlip(),
-        T.RandomRotation(15), 
-        T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2), 
-        T.RandomResizedCrop(size=input_shape[1:], scale=(0.8, 1.0))
-    ])
     
+# Data preprocessing
+weights = ResNet50_Weights.DEFAULT
+transform = weights.transforms()
+
+data_transforms = {
+    'train':
+        T.Compose([
+            T.Resize((224,224)),
+            T.RandomHorizontalFlip(),
+            T.ToTensor(),
+            T.Normalize(mean=transform.mean, std=transform.std)
+        ]),
+    'test':
+        T.Compose([
+            T.Resize((224,224)),
+            T.ToTensor(),
+            T.Normalize(mean=transform.mean, std=transform.std)
+        ]),
+}
+
 if args.train:
     shard_size = sizeOfShard(args.container, args.shard)
     slice_size = shard_size // args.slices
@@ -218,17 +224,12 @@ if args.train:
                 ):
                     # Convert data to torch format and send to selected device.
                     gpu_images = torch.from_numpy(images)
-                    if args.image_dataset: 
-                        # Augmentation 
-                        gpu_images = torch.stack([
-                            train_transform(img) for img in gpu_images
-                        ])
+                    
+                    if args.model == 'cifar10':
+                        gpu_images = torch.stack([data_transforms['train'](img) for img in gpu_images])
 
-                    gpu_images = gpu_images.to(device)
-
-                    gpu_labels = torch.from_numpy(labels).to(
-                        device
-                    )  # pylint: disable=no-member
+                    gpu_images.to(device)
+                    gpu_labels = torch.from_numpy(labels).to(device)  # pylint: disable=no-member
 
                     forward_start_time = time()
 
@@ -250,9 +251,7 @@ if args.train:
                     total += gpu_labels.size(0)
 
                 train_acc = 100 * correct / total
-
                 print(f" [Epoch {epoch+1}] - Loss: {running_loss:.4f} - Acc: {train_acc:.2f}%")
-                scheduler.step()
 
                 # Create a checkpoint every chkpt_interval.
                 if (
@@ -380,7 +379,10 @@ if args.test:
     outputs = np.empty((0, nb_classes))
     for images, _ in fetchTestBatch(args.dataset, args.batch_size):
         # Convert data to torch format and send to selected device.
-        gpu_images = torch.from_numpy(images).to(device)  # pylint: disable=no-member
+        gpu_images = torch.from_numpy(images)
+        if args.model == 'cifar10':
+            gpu_images = torch.stack([data_transforms['test'](img) for img in gpu_images])
+        gpu_images = gpu_images.to(device)  # pylint: disable=no-member
 
         if args.output_type == "softmax":
             # Actual batch prediction.
