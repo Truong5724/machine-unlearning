@@ -98,7 +98,6 @@ if args.model == 'cifar10':
     model = model_lib.Model(nb_classes)
 else:
     model = model_lib.Model(input_shape, nb_classes, dropout_rate=args.dropout_rate)
-    
 model.to(device)
 
 # Instantiate loss and optimizer.
@@ -119,13 +118,11 @@ data_transforms = {
         T.Compose([
             T.Resize((224,224)),
             T.RandomHorizontalFlip(),
-            T.ToTensor(),
             T.Normalize(mean=transform.mean, std=transform.std)
         ]),
     'test':
         T.Compose([
             T.Resize((224,224)),
-            T.ToTensor(),
             T.Normalize(mean=transform.mean, std=transform.std)
         ]),
 }
@@ -228,7 +225,7 @@ if args.train:
                     if args.model == 'cifar10':
                         gpu_images = torch.stack([data_transforms['train'](img) for img in gpu_images])
 
-                    gpu_images.to(device)
+                    gpu_images = gpu_images.to(device)
                     gpu_labels = torch.from_numpy(labels).to(device)  # pylint: disable=no-member
 
                     forward_start_time = time()
