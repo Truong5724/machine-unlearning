@@ -7,6 +7,8 @@ __pycache__/
 # Dataset folder
 *.npy
 containers
-datasets/celebA
+datasets/celebA/*.zip
+datasets/celebA/*.txt
+datasets/celebA/img_align_celeba/*.jpg
 datasets/CIFAR-10/cifar-10-batches-py
 datasets/CIFAR-10/cifar-10-python.tar.gz
