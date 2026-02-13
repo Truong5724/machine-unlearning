@@ -34,20 +34,19 @@ LOG_FILE="containers/celeba/training.log"
 echo "Training started at $(date)" > "${LOG_FILE}"
 
 # Tổng số tasks
-total_tasks=$((${shards} * 16))
+total_tasks=${shards}
 current_task=0
 
 start_time=$(date +%s)
 
 for i in $(seq 0 "$((${shards}-1))"); do
-    for j in 0; do
         current_task=$((${current_task} + 1))
         r=0
         
         echo ""
         echo "======================================================================"
         echo "Task ${current_task}/${total_tasks}"
-        echo "Shard: $((${i}+1))/${shards} | Requests: ${r} (scenario $((${j}+1))/16)"
+        echo "Shard: $((${i}+1))/${shards} | Requests: ${r}"
         echo "======================================================================"
         
         # Kiểm tra checkpoint đã tồn tại chưa
@@ -80,12 +79,12 @@ for i in $(seq 0 "$((${shards}-1))"); do
             2>&1 | tee -a "${LOG_FILE}"
         
         if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
-            echo "❌ Lỗi khi train shard ${i}, scenario ${j}"
+            echo "❌ Lỗi khi train shard ${i}"
             echo "   Xem log: ${LOG_FILE}"
             exit 1
         fi
         
-        echo "✅ Hoàn thành shard ${i}, scenario ${j}"
+        echo "✅ Hoàn thành shard ${i}"
         
         # Tính thời gian còn lại
         current_time=$(date +%s)
@@ -102,7 +101,6 @@ for i in $(seq 0 "$((${shards}-1))"); do
             echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
         fi
         
-    done
 done
 
 end_time=$(date +%s)
