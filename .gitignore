@@ -12,3 +12,6 @@ datasets/celebA/*.txt
 datasets/celebA/img_align_celeba/*.jpg
 datasets/CIFAR-10/cifar-10-batches-py
 datasets/CIFAR-10/cifar-10-python.tar.gz
+datasets/UTKFace/*.zip
+datasets/UTKFace/UTKFace/*.jpg
+datasets/UTKFace/crop_part1/*.jpg
