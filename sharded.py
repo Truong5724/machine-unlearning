@@ -58,6 +58,22 @@ def fetchShardBatch(container, label, shard, batch_size, dataset, offset=0, unti
         indices = np.setdiff1d(shards[shard][limit:until], requests[shard])
         yield dataloader.load(indices)
 
+def fetchValBatch(dataset, batch_size):
+    '''
+    Generator returning batches of points from the specified val dataset
+    with specified batch_size.
+    '''
+    with open(dataset) as f:
+        datasetfile = json.loads(f.read())
+    dataloader = importlib.import_module('.'.join(dataset.split('/')[:-1] + [datasetfile['dataloader']]))
+
+    limit = 0
+    while limit <= datasetfile['nb_val'] - batch_size:
+        limit += batch_size
+        yield dataloader.load(np.arange(limit - batch_size, limit), category='val')
+    if limit < datasetfile['nb_val']:
+        yield dataloader.load(np.arange(limit, datasetfile['nb_val']), category='val')
+
 def fetchTestBatch(dataset, batch_size):
     '''
     Generator returning batches of points from the specified test dataset

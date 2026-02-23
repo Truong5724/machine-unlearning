@@ -31,8 +31,12 @@ num_class = 10 # np.unique(all_labels).shape[0] (nếu muốn chắc chắn)
 # Tải dữ liệu test
 test_images, test_labels = load_cifar_batch(f"cifar-10-batches-py/test_batch")
 
+from sklearn.model_selection import train_test_split
+
 if not os.path.exists(f'cifar{num_class}_train.npy'):
-    np.save(f'cifar{num_class}_train.npy', {'X': all_images, 'y': all_labels})
+    X_train, X_val, y_train, y_val = train_test_split(all_images, all_labels, test_size=0.1, stratify=all_labels)
+    np.save(f'cifar{num_class}_train.npy', {'X': X_train, 'y': y_train})
+    np.save(f'cifar{num_class}_val.npy', {'X': X_val, 'y': y_val})
 
 # Lưu vào file
 if not os.path.exists(f'cifar{num_class}_test.npy'):
@@ -41,7 +45,8 @@ if not os.path.exists(f'cifar{num_class}_test.npy'):
 # Cập nhật file dataset
 if not os.path.exists("datasetfile"):
     dataset_info = {
-        "nb_train": len(all_images),
+        "nb_train": len(X_train),
+        "nb_val": len(X_val),
         "nb_test": len(test_images),
         "input_shape": all_images.shape[1:],
         "nb_classes": num_class,
