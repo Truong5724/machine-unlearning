@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from torch.nn import CrossEntropyLoss
 from torch.optim import Adam, SGD
-from torch.optim.lr_scheduler import ReduceLROnPlateau as ReduceLROnPlateauScheduler
+from torch.optim.lr_scheduler import ReduceLROnPlateau 
 from torch.nn.functional import one_hot, softmax
 from sharded import sizeOfShard, getShardHash, fetchShardBatch, fetchValBatch, fetchTestBatch
 import os
@@ -100,19 +100,41 @@ loss_fn = CrossEntropyLoss()
 if args.optimizer == "adam":
     optimizer = Adam(model.parameters(), lr=args.learning_rate)
 elif args.optimizer == "sgd":
-    optimizer = SGD(model.parameters(), lr=args.learning_rate, momentum=0.9, weight_decay=1e-4)
+    optimizer = SGD(model.parameters(), lr=args.learning_rate, momentum=0.9, weight_decay=5e-4, nesterov=True)
 else:
     raise "Unsupported optimizer"
 
-if args.train:
-    # Khởi tạo ReduceLROnPlateau scheduler (dựa trên val_acc)
-    reduce_lr = ReduceLROnPlateauScheduler(optimizer, 
-                                            mode='max', 
-                                            factor=0.5, 
-                                            patience=2, 
-                                            min_lr=0.00001, 
-                                            verbose=1)
-            
+class EarlyStopping:
+  def __init__(self, patience=10, min_delta=0, mode='max'):
+      self.patience = patience
+      self.min_delta = min_delta
+      self.mode = mode
+      self.best_score = None
+      self.counter = 0
+      self.early_stop = False
+
+  def __call__(self, metric):
+      if self.best_score is None:
+          self.best_score = metric
+          return False
+
+      if self.mode == 'max':
+          improvement = metric - self.best_score
+      else:
+          improvement = self.best_score - metric
+
+      if improvement > self.min_delta:
+          self.best_score = metric
+          self.counter = 0
+      else:
+          self.counter += 1
+
+      if self.counter >= self.patience:
+          self.early_stop = True
+
+      return self.early_stop
+
+if args.train:          
     shard_size = sizeOfShard(args.container, args.shard)
     slice_size = shard_size // args.slices
     avg_epochs_per_slice = (
@@ -189,6 +211,16 @@ if args.train:
             # Actual training.
             train_time = 0.0
 
+            # Khởi tạo ReduceLROnPlateau scheduler (dựa trên val_acc)
+            reduce_lr = ReduceLROnPlateau(optimizer, 
+                                          mode='max', 
+                                          factor=0.5, 
+                                          patience=3, 
+                                          min_lr=0.00001)
+            
+            # Khởi tạo EarlyStopping
+            early_stopping = EarlyStopping(patience=10, min_delta=0.002, mode='max')
+
             for epoch in tqdm(range(start_epoch, slice_epochs)):
                 model.train()
 
@@ -238,11 +270,15 @@ if args.train:
                         correct += (preds == gpu_val_labels).sum().item()
                         total += gpu_val_labels.size(0)
 
-                acc = 100 * correct / total
-                print(f" [Epoch {epoch+1}] - Loss: {running_loss:.4f} - Val accuracy : {acc:.2f}%")
+                val_acc = 100 * correct / total
+                print(f" [Epoch {epoch+1}] - Loss: {running_loss:.4f} - Val accuracy : {val_acc:.2f}%")
+
+                if early_stopping(val_acc):
+                  print("Early stopping triggered!")
+                  break
 
                 # Cập nhật ReduceLROnPlateau scheduler dựa trên val_acc
-                reduce_lr.step(acc)
+                reduce_lr.step(val_acc)
 
                 # Create a checkpoint every chkpt_interval.
                 if (
