@@ -22,6 +22,7 @@ SHARDS = 5
 STRATEGY = "proportional"  
 BATCH_SIZE = 32
 NB_CLASSES = 10
+INPUT_SHAPE = [3, 32, 32]
 
 # ----- CLI: only request label -----
 parser = argparse.ArgumentParser()
@@ -65,7 +66,9 @@ requests = np.load(requestfile_path, allow_pickle=True)
 print(f"Requestfile shape: {requests.shape}")
 
 # Assume requests is a 2D numeric array: flatten and uniq
-all_unlearn_indices = np.unique(requests.reshape(-1).astype(np.int64))
+all_unlearn_indices = np.unique(
+    np.concatenate([np.array(r, dtype=np.int64) for r in requests])
+)
 print(f"Total unlearning indices: {len(all_unlearn_indices)}")
 
 unlearn_data = X[all_unlearn_indices]
@@ -82,7 +85,7 @@ all_shard_outputs = []
 
 for sid in range(SHARDS):
     print(f"  Shard {sid + 1}/{SHARDS}...", end=" ")
-    model = model_lib.Model(NB_CLASSES)
+    model = model_lib.Model(input_shape=INPUT_SHAPE, nb_classes=NB_CLASSES)
     model.to(device)
 
     model_path = os.path.join(cache_dir, f"shard-{sid}:{LABEL}.pt")
@@ -97,7 +100,7 @@ for sid in range(SHARDS):
     with torch.no_grad():
         for i in range(0, len(unlearn_data), BATCH_SIZE):
             j = min(i + BATCH_SIZE, len(unlearn_data))
-            batch = unlearn_data[i:j] / 255.0
+            batch = unlearn_data[i:j].astype(np.float32) / 255.0
             tensor = torch.from_numpy(batch).to(device)
             
             logits = model(tensor)
@@ -170,3 +173,4 @@ with open(results_file, "w") as f:
 
 print(f"\nResults saved to: {results_file}")
 print(f"Predictions saved to: {predictions_file}")
+
