@@ -15,6 +15,6 @@ fi
 
 python distribution.py --shards "${shards}" --distribution uniform --container "cifar10" --dataset datasets/CIFAR-10/datasetfile --label 0
 
-# for j in 0; do # Train 1 model tổng thể
-#     python distribution.py --requests "${j}" --distribution uniform --container "cifar10" --dataset datasets/CIFAR-10/datasetfile --label "${j}"
-# done
+for j in 100; do 
+    python distribution.py --requests "${j}" --distribution uniform --container "cifar10" --dataset datasets/CIFAR-10/datasetfile --label "${j}"
+done
