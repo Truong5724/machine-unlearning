@@ -95,14 +95,8 @@ device = torch.device(
 model = model_lib.Model(input_shape, nb_classes, dropout_rate=args.dropout_rate)
 model.to(device)
 
-# Instantiate loss and optimizer.
+# Instantiate loss.
 loss_fn = CrossEntropyLoss()
-if args.optimizer == "adam":
-    optimizer = Adam(model.parameters(), lr=args.learning_rate)
-elif args.optimizer == "sgd":
-    optimizer = SGD(model.parameters(), lr=args.learning_rate, momentum=0.9, weight_decay=5e-4, nesterov=True)
-else:
-    raise "Unsupported optimizer"
 
 class EarlyStopping:
   def __init__(self, patience=10, min_delta=0, mode='max'):
@@ -208,6 +202,14 @@ if args.train:
             elif sl == 0:
                 loaded = True
 
+            # Instantiate optimizer (need to instantiate in slice loop so as to learning rate will be reset in each slice).
+            if args.optimizer == "adam":
+                optimizer = Adam(model.parameters(), lr=args.learning_rate)
+            elif args.optimizer == "sgd":
+                optimizer = SGD(model.parameters(), lr=args.learning_rate, momentum=0.9, weight_decay=5e-4, nesterov=True)
+            else:
+                raise "Unsupported optimizer"
+            
             # Actual training.
             train_time = 0.0
 
