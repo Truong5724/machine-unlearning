@@ -80,8 +80,8 @@
 # echo "Bước tiếp theo:"
 # echo "  ./train_fast.sh ${shards}"
 # echo "======================================================================"
-#!/bin/bash
-# init_utkface_simple.sh - Khởi tạo SISA CHỈ TRAIN (KHÔNG UNLEARNING)
+!/bin/bash
+init_utkface_simple.sh - Khởi tạo SISA CHỈ TRAIN (KHÔNG UNLEARNING)
 
 set -eou pipefail
 IFS=$'\n\t'
