@@ -63,7 +63,7 @@ for label in "${scenarios[@]}"; do
         
         echo "🔄 Training shard ${i} with label ${label}..."
         
-        python sisa.py \
+        python sisa_utkface.py \
             --model utkface \
             --train \
             --slices 1 \
