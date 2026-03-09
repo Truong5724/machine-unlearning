@@ -17,7 +17,7 @@ from architectures.utkface_multitask import MultiTaskModel
 
 
 TASK_BY_SHARD = {0: "gender", 1: "age", 2: "race"}
-NUM_CLASSES = {"gender": 2, "age": 5, "race": 5}
+NUM_CLASSES = {"gender": 2, "age": 3, "race": 5}
 
 
 def get_task(shard):
@@ -79,6 +79,22 @@ def iter_batches(indices, batch_size, shuffle=True):
         yield indices[i : i + batch_size]
 
 
+def make_class_weight(labels, num_classes, device):
+    """
+    Inverse-frequency weights, normalized so mean=1.
+    Chỉ dùng cho shard race (shard 2) để bù lệch class.
+    """
+    if not isinstance(labels, np.ndarray):
+        labels = np.asarray(labels)
+    counts = np.bincount(labels.astype(np.int64), minlength=num_classes).astype(np.float32)
+    counts[counts == 0.0] = 1.0  # tránh div-by-zero
+    w = 1.0 / np.sqrt(counts)
+    w = w / w.mean()
+    
+    print(f"[info] class_weight = {w.round(4).tolist()}")
+    return torch.tensor(w, dtype=torch.float32, device=device)
+
+
 def train(args):
     task = get_task(args.shard)
     nb_classes = NUM_CLASSES[task]
@@ -97,16 +113,25 @@ def train(args):
         for slice_indices in slice_plan:
             filtered_plan.append(np.setdiff1d(slice_indices, requested_indices))
         slice_plan = filtered_plan
-        # Nếu unlearn làm một slice rỗng hoàn toàn, hash cumulative sẽ bị trùng (vì indices không đổi).
-        # Loại bỏ các slice rỗng để tránh checkpoint collision và giữ đúng logic SISA.
         slice_plan = [s for s in slice_plan if len(s) > 0]
 
     if np.sum([len(x) for x in slice_plan]) == 0:
         print(f"All data removed by unlearning for shard {args.shard} ({task}).")
         return
 
+    # ── Weighted loss chỉ cho shard 2 (race) ──────────────────────────────
+    if args.shard == 2 and args.use_class_weight:
+        all_indices = np.concatenate(slice_plan)
+        _, all_labels = dataloader.load_multitask(all_indices, category="train")
+        y_all = all_labels[task].astype(np.int64)
+        class_weight = make_class_weight(y_all, nb_classes, device)
+        loss_fn = CrossEntropyLoss(weight=class_weight)
+        print(f"[info] Using weighted CrossEntropyLoss for task={task}")
+    else:
+        loss_fn = CrossEntropyLoss()
+    # ──────────────────────────────────────────────────────────────────────
+
     optimizer = make_optimizer(model, args.optimizer, args.learning_rate)
-    loss_fn = CrossEntropyLoss()
 
     avg_epochs_per_slice = (
         2 * len(slice_plan) / (len(slice_plan) + 1) * args.epochs / len(slice_plan)
@@ -117,7 +142,7 @@ def train(args):
     cumulative_train_time = 0.0
 
     for slice_id in tqdm(range(len(slice_plan)), desc=f"Shard {args.shard}-{task}"):
-        current_indices = np.concatenate(slice_plan[: slice_id + 1])
+        current_indices = slice_plan[slice_id]
         slice_hash = get_hash(current_indices)
         final_ckpt = f"containers/{args.container}/cache/{slice_hash}.pt"
         final_time = f"containers/{args.container}/times/{slice_hash}.time"
@@ -131,7 +156,9 @@ def train(args):
             continue
 
         start_epoch = 0
-        slice_epochs = int((slice_id + 1) * avg_epochs_per_slice) - int(slice_id * avg_epochs_per_slice)
+        slice_epochs = int((slice_id + 1) * avg_epochs_per_slice) - int(
+            slice_id * avg_epochs_per_slice
+        )
 
         if not loaded:
             recovery_list = glob(f"containers/{args.container}/cache/{slice_hash}_*.pt")
@@ -143,7 +170,7 @@ def train(args):
                     with open(time_path, "r") as f:
                         elapsed_time = float(f.read().strip())
             elif slice_id > 0:
-                prev_indices = np.concatenate(slice_plan[:slice_id])
+                prev_indices = np.concatenate(slice_plan[:slice_id]) if slice_plan[:slice_id] else np.array([])
                 prev_hash = get_hash(prev_indices)
                 prev_path = f"containers/{args.container}/cache/{prev_hash}.pt"
                 if os.path.exists(prev_path):
@@ -176,14 +203,22 @@ def train(args):
 
             cumulative_train_time += time() - epoch_start
             acc = 100.0 * correct / max(total, 1)
-            print(f"[Shard {args.shard}][Slice {slice_id}][Epoch {epoch + 1}] loss={running_loss:.4f} acc={acc:.2f}%")
+            print(
+                f"[Shard {args.shard}][Slice {slice_id}][Epoch {epoch + 1}]"
+                f" loss={running_loss:.4f} acc={acc:.2f}%"
+            )
 
-            if args.chkpt_interval != -1 and epoch % args.chkpt_interval == args.chkpt_interval - 1:
+            if (
+                args.chkpt_interval != -1
+                and epoch % args.chkpt_interval == args.chkpt_interval - 1
+            ):
                 torch.save(
                     model.state_dict(),
                     f"containers/{args.container}/cache/{slice_hash}_{epoch}.pt",
                 )
-                with open(f"containers/{args.container}/times/{slice_hash}_{epoch}.time", "w") as f:
+                with open(
+                    f"containers/{args.container}/times/{slice_hash}_{epoch}.time", "w"
+                ) as f:
                     f.write(f"{cumulative_train_time + elapsed_time}\n")
 
         torch.save(model.state_dict(), final_ckpt)
@@ -231,11 +266,12 @@ def test(args):
         if args.output_type == "softmax":
             preds = softmax(logits, dim=1).to("cpu").numpy()
         else:
-            argmax = torch.argmax(logits, dim=1)
-            preds = one_hot(argmax, nb_classes).to("cpu").numpy()
+            argmax_preds = torch.argmax(logits, dim=1)
+            preds = one_hot(argmax_preds, nb_classes).to("cpu").numpy()
 
         outputs = np.concatenate((outputs, preds))
 
+    os.makedirs(f"containers/{args.container}/outputs", exist_ok=True)
     np.save(
         f"containers/{args.container}/outputs/shard-{args.shard}:{args.label}.npy",
         outputs,
@@ -260,7 +296,25 @@ def main():
     parser.add_argument("--chkpt_interval", type=int, default=5)
     parser.add_argument("--output_type", default="argmax", choices=["argmax", "softmax"])
 
+    # weighted loss cho race (shard 2), mặc định bật
+    parser.add_argument(
+        "--use_class_weight",
+        action="store_true",
+        default=True,
+        help="Dùng weighted CrossEntropyLoss cho shard 2 (race) để bù lệch class",
+    )
+    parser.add_argument(
+        "--no_class_weight",
+        dest="use_class_weight",
+        action="store_false",
+        help="Tắt weighted loss",
+    )
+
     args = parser.parse_args()
+
+    os.makedirs(f"containers/{args.container}/cache", exist_ok=True)
+    os.makedirs(f"containers/{args.container}/times", exist_ok=True)
+    os.makedirs(f"containers/{args.container}/outputs", exist_ok=True)
 
     if args.train:
         train(args)

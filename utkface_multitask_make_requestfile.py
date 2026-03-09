@@ -56,15 +56,24 @@ def main():
     forget_indices = np.asarray(slices[args.slice], dtype=np.int64)
     request_path = f"containers/{args.container}/requestfile:{args.label}.npy"
 
+    # Khởi tạo / load requestfile dưới dạng mảng object độ dài 3 (mỗi phần tử là 1 np.array indices)
     if args.mode == "merge" and os.path.exists(request_path):
-        req = np.load(request_path, allow_pickle=True)
-        req = np.asarray(req, dtype=object)
-        while len(req) < 3:
-            req = np.append(req, np.array([np.array([], dtype=np.int64)], dtype=object))
-        current = np.asarray(req[shard], dtype=np.int64)
+        loaded = np.load(request_path, allow_pickle=True)
+        # Ép về mảng object 1D length>=3
+        req = np.empty(3, dtype=object)
+        loaded = np.asarray(loaded, dtype=object).ravel()
+        for i in range(3):
+            if i < len(loaded) and loaded[i] is not None and len(np.asarray(loaded[i]).shape) >= 1:
+                req[i] = np.asarray(loaded[i], dtype=np.int64)
+            else:
+                req[i] = np.array([], dtype=np.int64)
+        current = req[shard]
         req[shard] = np.union1d(current, forget_indices)
     else:
-        req = np.array([np.array([], dtype=np.int64) for _ in range(3)], dtype=object)
+        # Tạo mới requestfile rỗng cho 3 shards
+        req = np.empty(3, dtype=object)
+        for i in range(3):
+            req[i] = np.array([], dtype=np.int64)
         req[shard] = forget_indices
 
     os.makedirs(f"containers/{args.container}", exist_ok=True)

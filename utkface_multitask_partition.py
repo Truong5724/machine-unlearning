@@ -6,12 +6,12 @@ import numpy as np
 
 
 def build_age_slices(ages):
-    # 5 bins đều trên [0..116] giống dataloader_ver2.AGE_BINS
-    edges = np.array([0, 24, 48, 72, 96, 117], dtype=np.int64)
+    # 3 bins: [0..18), [18..60), [60..116]
+    edges = np.array([0, 18, 60, 117], dtype=np.int64)
     ages = np.asarray(ages, dtype=np.int64)
     ages = np.clip(ages, edges[0], edges[-1] - 1)
     bins = np.digitize(ages, edges[1:-1], right=False).astype(np.int64)
-    return [np.where(bins == idx)[0] for idx in range(5)]
+    return [np.where(bins == idx)[0] for idx in range(3)]
 
 
 def build_race5_slices(races):
@@ -69,8 +69,8 @@ def main():
     meta = {
         "tasks": ["gender", "age", "race"],
         "task_to_shard": {"gender": 0, "age": 1, "race": 2},
-        "slices_per_shard": {"0": 2, "1": 5, "2": 5},
-        "age_edges": [0, 24, 48, 72, 96, 116],
+        "slices_per_shard": {"0": 2, "1": 3, "2": 5},
+        "age_edges": [0, 18, 60, 116],
         "race5_mapping": {
             "0": "White",
             "1": "Black",
