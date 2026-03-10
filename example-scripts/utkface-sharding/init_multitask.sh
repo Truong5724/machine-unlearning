@@ -15,4 +15,4 @@ python utkface_multitask_partition.py \
   --dataset datasets/UTKFace/datasetfile_ver2 \
   --label ${label}
 
-echo "Done. 3 shards created: 0=gender(2 slices), 1=age(5 slices), 2=race(5 slices)."
+echo "Done. 3 shards created: 0=gender(2 slices), 1=age(3 slices), 2=race(5 slices)."
