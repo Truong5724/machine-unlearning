@@ -119,7 +119,9 @@ def main():
         y = np.asarray(labels_by_task[name], dtype=np.int64)
         pos_total = int(y.sum())
         neg_total = int(len(y) - pos_total)
-        pos_per_slice = [int(y[s].sum()) for s in slices_dict[name]]
+        pos_per_slice = [
+            int(y[np.asarray(s, dtype=np.int64)].sum()) for s in slices_dict[name]
+        ]
         print(
             f"  {name}: sizes={lengths}, pos_total={pos_total}, "
             f"neg_total={neg_total}, pos_per_slice={pos_per_slice}"
