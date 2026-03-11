@@ -1,4 +1,5 @@
 import argparse
+import importlib
 import json
 import os
 
@@ -16,6 +17,19 @@ OVR_TASKS = [
     "race_indian",
     "race_others",
 ]
+
+
+def load_ovr_dataloader(datasetfile_path):
+    """Load dataloader module from datasetfile metadata if available."""
+    with open(datasetfile_path, "r") as f:
+        datasetfile = json.load(f)
+
+    module_name = ".".join(
+        datasetfile_path.replace("\\", "/").split("/")[:-1]
+        + [datasetfile["dataloader"]]
+    )
+    module = importlib.import_module(module_name)
+    return module
 
 
 def main():
@@ -38,6 +52,12 @@ def main():
         type=int,
         default=2,
         help="Số slice SISA trong mỗi shard (mặc định 2, random indices)",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed để tạo slices (cố định để reproducible)",
     )
     args = parser.parse_args()
 
@@ -65,7 +85,7 @@ def main():
     np.save(f"{container_dir}/requestfile:{args.label}.npy", requests)
 
     # SISA slices: chia random indices thành N slice (default 2) cho mỗi shard
-    np.random.seed(42)
+    np.random.seed(args.seed)
     slices_dict = {}
     for shard, name in enumerate(OVR_TASKS):
         idx = np.random.permutation(all_indices)
@@ -83,9 +103,27 @@ def main():
         json.dump(meta, f, indent=2)
 
     print("Created UTKFace OVR partitions:")
+    labels_by_task = None
+    try:
+        dataloader = load_ovr_dataloader(args.dataset)
+        labels_by_task = dataloader.load_ovr_labels(all_indices, category="train")
+    except Exception as e:
+        print(f"  (Không load được nhãn OVR để thống kê class balance: {e})")
+
     for name in OVR_TASKS:
         lengths = [len(x) for x in slices_dict[name]]
-        print(f"  {name}: {lengths}")
+        if labels_by_task is None:
+            print(f"  {name}: sizes={lengths}")
+            continue
+
+        y = np.asarray(labels_by_task[name], dtype=np.int64)
+        pos_total = int(y.sum())
+        neg_total = int(len(y) - pos_total)
+        pos_per_slice = [int(y[s].sum()) for s in slices_dict[name]]
+        print(
+            f"  {name}: sizes={lengths}, pos_total={pos_total}, "
+            f"neg_total={neg_total}, pos_per_slice={pos_per_slice}"
+        )
 
 
 if __name__ == "__main__":
