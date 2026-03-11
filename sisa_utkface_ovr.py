@@ -8,14 +8,39 @@ from time import time
 import numpy as np
 import torch
 from torch.nn import BCEWithLogitsLoss
+import torch.nn.functional as F
 from torch.optim import Adam, SGD
-from torch.nn.functional import sigmoid
 from tqdm import tqdm
 
 from architectures.utkface_ovr import OVRModel, OVR_TASKS
 
 
 TASK_BY_SHARD = {i: name for i, name in enumerate(OVR_TASKS)}  # 0..9
+
+
+class BinaryFocalLossWithLogits(torch.nn.Module):
+    def __init__(self, gamma=2.0, alpha=0.25, pos_weight=None):
+        super().__init__()
+        self.gamma = gamma
+        self.alpha = alpha
+        self.pos_weight = pos_weight
+
+    def forward(self, logits, targets):
+        targets = targets.float()
+        bce = F.binary_cross_entropy_with_logits(
+            logits,
+            targets,
+            reduction="none",
+            pos_weight=self.pos_weight,
+        )
+
+        probs = torch.sigmoid(logits)
+        p_t = probs * targets + (1.0 - probs) * (1.0 - targets)
+        focal_factor = torch.pow(1.0 - p_t, self.gamma)
+
+        alpha_t = self.alpha * targets + (1.0 - self.alpha) * (1.0 - targets)
+        loss = alpha_t * focal_factor * bce
+        return loss.mean()
 
 
 def get_task(shard):
@@ -79,6 +104,12 @@ def iter_batches(indices, batch_size, shuffle=True):
         yield indices[i : i + batch_size]
 
 
+def parse_task_set(text):
+    if text is None or text.strip() == "":
+        return set()
+    return {x.strip() for x in text.split(",") if x.strip()}
+
+
 def train(args):
     task = get_task(args.shard)
 
@@ -92,6 +123,8 @@ def train(args):
     y_all = np.asarray(all_labels[task], dtype=np.int64)
     pos = y_all.sum()
     neg = len(y_all) - pos
+    severe_task_set = parse_task_set(args.focal_tasks)
+
     if pos == 0:
         pos_weight_value = 1.0
     else:
@@ -116,7 +149,34 @@ def train(args):
         return
 
     optimizer = make_optimizer(model, args.optimizer, args.learning_rate)
-    loss_fn = BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight_value, device=device))
+
+    use_focal = args.loss_mode == "focal" or (
+        args.loss_mode == "auto" and task in severe_task_set
+    )
+    pos_weight_tensor = torch.tensor(pos_weight_value, device=device)
+
+    if use_focal:
+        if args.focal_alpha < 0:
+            # Auto alpha: tăng trọng số positive khi lớp positive hiếm.
+            alpha = float(neg) / float(max(pos + neg, 1))
+            alpha = min(max(alpha, 0.05), 0.95)
+        else:
+            alpha = args.focal_alpha
+
+        loss_fn = BinaryFocalLossWithLogits(
+            gamma=args.focal_gamma,
+            alpha=alpha,
+            pos_weight=pos_weight_tensor,
+        )
+        print(
+            f"[Shard {args.shard}][{task}] loss=focal gamma={args.focal_gamma} "
+            f"alpha={alpha:.4f} pos_weight={pos_weight_value:.4f}"
+        )
+    else:
+        loss_fn = BCEWithLogitsLoss(pos_weight=pos_weight_tensor)
+        print(
+            f"[Shard {args.shard}][{task}] loss=bce pos_weight={pos_weight_value:.4f}"
+        )
 
     avg_epochs_per_slice = (
         2 * len(slice_plan) / (len(slice_plan) + 1) * args.epochs / len(slice_plan)
@@ -198,7 +258,7 @@ def train(args):
                 optimizer.step()
 
                 running_loss += loss.item()
-                probs = sigmoid(logits)
+                probs = torch.sigmoid(logits)
                 preds = (probs > 0.5).long()
                 correct += (preds == y.long()).sum().item()
                 total += y.size(0)
@@ -257,15 +317,21 @@ def test(args):
     model.load_state_dict(torch.load(ckpt, map_location=device))
     model.eval()
 
-    nb_test = datasetfile["nb_test"]
-    test_indices = np.arange(nb_test, dtype=np.int64)
+    key = f"nb_{args.eval_split}"
+    if key not in datasetfile:
+        raise KeyError(
+            f"{key} không có trong datasetfile. "
+            "Hãy chạy lại prepare_data_ovr.py để tạo split tương ứng."
+        )
+    nb_eval = datasetfile[key]
+    eval_indices = np.arange(nb_eval, dtype=np.int64)
 
     outputs = []
-    for batch_ids in iter_batches(test_indices, args.batch_size, shuffle=False):
-        images, _ = dataloader.load_ovr(batch_ids, category="test")
+    for batch_ids in iter_batches(eval_indices, args.batch_size, shuffle=False):
+        images, _ = dataloader.load_ovr(batch_ids, category=args.eval_split)
         x = torch.from_numpy(images).to(device)
         logits = model.forward_task(x, task)
-        probs = sigmoid(logits).to("cpu").numpy()  # (B,)
+        probs = torch.sigmoid(logits).to("cpu").numpy()  # (B,)
         outputs.append(probs.reshape(-1, 1))
 
     if outputs:
@@ -273,10 +339,15 @@ def test(args):
     else:
         out_mat = np.empty((0, 1), dtype=np.float32)
 
-    np.save(
-        f"containers/{args.container}/outputs/shard-{args.shard}:{args.label}.npy",
-        out_mat,
-    )
+    if args.eval_split == "test":
+        out_path = f"containers/{args.container}/outputs/shard-{args.shard}:{args.label}.npy"
+    else:
+        out_path = (
+            f"containers/{args.container}/outputs/"
+            f"shard-{args.shard}:{args.label}:{args.eval_split}.npy"
+        )
+    np.save(out_path, out_mat)
+    print(f"Saved outputs: {out_path}")
 
 
 def main():
@@ -296,6 +367,35 @@ def main():
     parser.add_argument("--optimizer", default="adam")
     parser.add_argument("--dropout_rate", type=float, default=0.3)
     parser.add_argument("--chkpt_interval", type=int, default=5)
+    parser.add_argument(
+        "--loss_mode",
+        default="auto",
+        choices=["auto", "bce", "focal"],
+        help="Chọn loss: auto (focal cho head severe), bce, focal.",
+    )
+    parser.add_argument(
+        "--focal_tasks",
+        default="race_others,age_bin2",
+        help="Danh sách head dùng focal khi loss_mode=auto (csv).",
+    )
+    parser.add_argument(
+        "--focal_gamma",
+        type=float,
+        default=2.0,
+        help="Gamma cho focal loss.",
+    )
+    parser.add_argument(
+        "--focal_alpha",
+        type=float,
+        default=-1.0,
+        help="Alpha cho focal loss; <0 để tự động theo imbalance.",
+    )
+    parser.add_argument(
+        "--eval_split",
+        default="test",
+        choices=["val", "test"],
+        help="Split dùng khi chạy --test.",
+    )
 
     args = parser.parse_args()
 

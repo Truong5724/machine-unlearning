@@ -11,6 +11,10 @@ BATCH_SIZE=${BATCH_SIZE:-64}
 LR=${LEARNING_RATE:-0.001}
 OPTIMIZER=${OPTIMIZER:-adam}
 CHKPT=${CHKPT_INTERVAL:-5}
+LOSS_MODE=${LOSS_MODE:-auto}
+FOCAL_TASKS=${FOCAL_TASKS:-race_others,age_bin2}
+FOCAL_GAMMA=${FOCAL_GAMMA:-2.0}
+FOCAL_ALPHA=${FOCAL_ALPHA:--1}
 
 echo "======================================================================"
 echo "TRAIN UTKFACE OVR"
@@ -20,6 +24,8 @@ echo "Label     : ${label}"
 echo "Shards    : ${shard_spec}"
 echo "Epochs    : ${EPOCHS}"
 echo "Batch size: ${BATCH_SIZE}"
+echo "Loss mode : ${LOSS_MODE}"
+echo "Focal task: ${FOCAL_TASKS}"
 echo "======================================================================"
 
 IFS='-' read -r start_shard end_shard <<< "${shard_spec}"
@@ -50,7 +56,11 @@ for shard in $(seq "${start_shard}" "${end_shard}"); do
     --batch_size "${BATCH_SIZE}" \
     --learning_rate "${LR}" \
     --optimizer "${OPTIMIZER}" \
-    --chkpt_interval "${CHKPT}"
+    --chkpt_interval "${CHKPT}" \
+    --loss_mode "${LOSS_MODE}" \
+    --focal_tasks "${FOCAL_TASKS}" \
+    --focal_gamma "${FOCAL_GAMMA}" \
+    --focal_alpha "${FOCAL_ALPHA}"
 done
 
 echo ""

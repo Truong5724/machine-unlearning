@@ -7,6 +7,7 @@ Files:
     * age   : (N,) int64
     * gender: (N,) int64
     * race  : (N,) int64
+- utkface_val_ovr.h5
 - utkface_test_ovr.h5
 
 Các head OVR (10 binary tasks):
@@ -29,11 +30,16 @@ import h5py
 pwd = os.path.dirname(os.path.realpath(__file__))
 
 train_path = os.path.join(pwd, "utkface_train_ovr.h5")
+val_path = os.path.join(pwd, "utkface_val_ovr.h5")
 test_path = os.path.join(pwd, "utkface_test_ovr.h5")
 
 if not os.path.exists(train_path):
     raise FileNotFoundError(
         f"Không tìm thấy {train_path}. Hãy chạy prepare_data_ovr.py trước!"
+    )
+if not os.path.exists(val_path):
+    raise FileNotFoundError(
+        f"Không tìm thấy {val_path}. Hãy chạy prepare_data_ovr.py trước!"
     )
 if not os.path.exists(test_path):
     raise FileNotFoundError(
@@ -41,28 +47,35 @@ if not os.path.exists(test_path):
     )
 
 train_file = h5py.File(train_path, "r")
+val_file = h5py.File(val_path, "r")
 test_file = h5py.File(test_path, "r")
 
 try:
     train_size = train_file.attrs["num_samples"]
+    val_size = val_file.attrs["num_samples"]
     test_size = test_file.attrs["num_samples"]
     print("✅ Đã kết nối UTKFace OVR HDF5:")
     print(f"   Train: {train_size} samples")
+    print(f"   Val  : {val_size} samples")
     print(f"   Test : {test_size} samples")
 except Exception as e:
     print(f"⚠️  Không đọc được metadata OVR: {e}")
     train_size = len(train_file["images"])
+    val_size = len(val_file["images"])
     test_size = len(test_file["images"])
     print(f"   Train: {train_size} samples")
+    print(f"   Val  : {val_size} samples")
     print(f"   Test : {test_size} samples")
 
 
 def _select_file(category):
     if category == "train":
         return train_file
+    if category == "val":
+        return val_file
     if category == "test":
         return test_file
-    raise ValueError(f"category phải là 'train' hoặc 'test', nhận: {category}")
+    raise ValueError(f"category phải là 'train', 'val' hoặc 'test', nhận: {category}")
 
 
 def _normalize_indices(indices):
@@ -174,13 +187,16 @@ def load_ovr(indices, category="train"):
 def get_dataset_size(category="train"):
     if category == "train":
         return len(train_file["images"])
+    if category == "val":
+        return len(val_file["images"])
     if category == "test":
         return len(test_file["images"])
-    raise ValueError("category phải là 'train' hoặc 'test'")
+    raise ValueError("category phải là 'train', 'val' hoặc 'test'")
 
 
 def close():
     train_file.close()
+    val_file.close()
     test_file.close()
     print("✅ Đã đóng HDF5 OVR")
 

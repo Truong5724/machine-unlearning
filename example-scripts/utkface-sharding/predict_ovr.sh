@@ -5,6 +5,7 @@ IFS=$'\n\t'
 container=${1:-utkface_ovr}
 label=${2:-0}
 shard_spec=${3:-0-9}
+eval_split=${4:-test}
 
 BATCH_SIZE=${BATCH_SIZE:-128}
 
@@ -14,8 +15,14 @@ echo "======================================================================"
 echo "Container : ${container}"
 echo "Label     : ${label}"
 echo "Shards    : ${shard_spec}"
+echo "Split     : ${eval_split}"
 echo "Batch size: ${BATCH_SIZE}"
 echo "======================================================================"
+
+if [[ "${eval_split}" != "val" && "${eval_split}" != "test" ]]; then
+  echo "Invalid eval split: ${eval_split}. Use val or test"
+  exit 1
+fi
 
 IFS='-' read -r start_shard end_shard <<< "${shard_spec}"
 
@@ -38,10 +45,11 @@ for shard in $(seq "${start_shard}" "${end_shard}"); do
     --dataset datasets/UTKFace/datasetfile_ovr \
     --shard "${shard}" \
     --label "${label}" \
-    --batch_size "${BATCH_SIZE}"
+    --batch_size "${BATCH_SIZE}" \
+    --eval_split "${eval_split}"
 done
 
 echo ""
-echo "✅ PREDICT OVR DONE (shards ${shard_spec})"
+  echo "✅ PREDICT OVR DONE (shards ${shard_spec}, split ${eval_split})"
 echo "======================================================================"
 

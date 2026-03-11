@@ -2,7 +2,7 @@
 Chuẩn bị UTKFace dataset cho kiến trúc One-vs-Rest (OVR).
 
 - Parse filename để lấy age, gender, race
-- Tạo train/test split (80/20)
+- Tạo train/val/test split (mặc định 80/10/10)
 - Lưu dưới dạng HDF5 (memory-efficient)
 - Giữ đầy đủ:
     * images
@@ -19,6 +19,7 @@ Các head OVR sẽ được định nghĩa trong dataloader_ovr.py:
 import os
 import json
 import argparse
+import shutil
 import numpy as np
 from PIL import Image
 import h5py
@@ -142,6 +143,14 @@ def main():
     parser.add_argument(
         "--train_ratio", type=float, default=0.8, help="Train split ratio"
     )
+    parser.add_argument(
+        "--val_ratio", type=float, default=0.1, help="Validation split ratio"
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Ghi đè lại toàn bộ file *_ovr.h5 hiện có để đồng bộ split.",
+    )
     args = parser.parse_args()
 
     target_size = (args.target_size, args.target_size)
@@ -150,8 +159,18 @@ def main():
     print("CHUẨN BỊ UTKFACE DATASET - OVR")
     print("=" * 70)
     print(f"Target size: {target_size}")
-    print(f"Train ratio: {args.train_ratio}")
+    print(
+        "Split ratio: "
+        f"train={args.train_ratio}, val={args.val_ratio}, "
+        f"test={1.0 - args.train_ratio - args.val_ratio}"
+    )
     print()
+
+    test_ratio = 1.0 - args.train_ratio - args.val_ratio
+    if args.train_ratio <= 0 or args.val_ratio <= 0 or test_ratio <= 0:
+        raise ValueError(
+            "Tỉ lệ không hợp lệ. Cần train_ratio>0, val_ratio>0 và train+val<1."
+        )
 
     # Tìm ảnh
     print("🔍 Đang tìm ảnh...")
@@ -202,66 +221,114 @@ def main():
     genders = genders[idx_all]
     races = races[idx_all]
 
-    # Train/test split
-    train_size = int(len(valid_files) * args.train_ratio)
-    train_files = valid_files[:train_size]
-    test_files = valid_files[train_size:]
+    # Train/val/test split
+    n_total = len(valid_files)
+    train_size = int(n_total * args.train_ratio)
+    val_size = int(n_total * args.val_ratio)
+    test_size = n_total - train_size - val_size
 
-    train_ages = ages[:train_size]
-    test_ages = ages[train_size:]
-    train_genders = genders[:train_size]
-    test_genders = genders[train_size:]
-    train_races = races[:train_size]
-    test_races = races[train_size:]
+    if train_size <= 0 or val_size <= 0 or test_size <= 0:
+        raise ValueError(
+            "Kích thước split không hợp lệ. Hãy điều chỉnh train_ratio/val_ratio."
+        )
+
+    train_end = train_size
+    val_end = train_size + val_size
+
+    train_files = valid_files[:train_end]
+    val_files = valid_files[train_end:val_end]
+    test_files = valid_files[val_end:]
+
+    train_ages = ages[:train_end]
+    val_ages = ages[train_end:val_end]
+    test_ages = ages[val_end:]
+    train_genders = genders[:train_end]
+    val_genders = genders[train_end:val_end]
+    test_genders = genders[val_end:]
+    train_races = races[:train_end]
+    val_races = races[train_end:val_end]
+    test_races = races[val_end:]
 
     print(f"\n📊 Split:")
     print(f"   Train: {len(train_files)} samples")
+    print(f"   Val  : {len(val_files)} samples")
     print(f"   Test:  {len(test_files)} samples")
+
+    train_h5 = "utkface_train_ovr.h5"
+    val_h5 = "utkface_val_ovr.h5"
+    test_h5 = "utkface_test_ovr.h5"
+    existing_h5 = [p for p in [train_h5, val_h5, test_h5] if os.path.exists(p)]
+
+    if existing_h5 and not args.overwrite:
+        raise FileExistsError(
+            "Đã tồn tại file OVR HDF5. Để tránh lệch split/metadata, "
+            "hãy chạy lại với --overwrite hoặc xóa các file: "
+            f"{', '.join(existing_h5)}"
+        )
+
+    if args.overwrite:
+        for p in existing_h5:
+            if os.path.isdir(p):
+                shutil.rmtree(p)
+            else:
+                os.remove(p)
 
     # Lưu HDF5 train
     print("\n📦 Tạo utkface_train_ovr.h5...")
-    if not os.path.exists("utkface_train_ovr.h5"):
-        with h5py.File("utkface_train_ovr.h5", "w") as h5f:
-            h5f.attrs["target_size"] = target_size
-            h5f.attrs["num_samples"] = len(train_files)
-            h5f.attrs["has_ovr_labels"] = True
-            save_to_hdf5(
-                h5f,
-                train_files,
-                train_ages,
-                train_genders,
-                train_races,
-                target_size,
-                args.batch_size,
-            )
-        print("✅ Đã lưu utkface_train_ovr.h5")
-    else:
-        print("✅ utkface_train_ovr.h5 đã tồn tại")
+    with h5py.File(train_h5, "w") as h5f:
+        h5f.attrs["target_size"] = target_size
+        h5f.attrs["num_samples"] = len(train_files)
+        h5f.attrs["has_ovr_labels"] = True
+        save_to_hdf5(
+            h5f,
+            train_files,
+            train_ages,
+            train_genders,
+            train_races,
+            target_size,
+            args.batch_size,
+        )
+    print("✅ Đã lưu utkface_train_ovr.h5")
+
+    # Lưu HDF5 val
+    print("\n📦 Tạo utkface_val_ovr.h5...")
+    with h5py.File(val_h5, "w") as h5f:
+        h5f.attrs["target_size"] = target_size
+        h5f.attrs["num_samples"] = len(val_files)
+        h5f.attrs["has_ovr_labels"] = True
+        save_to_hdf5(
+            h5f,
+            val_files,
+            val_ages,
+            val_genders,
+            val_races,
+            target_size,
+            args.batch_size,
+        )
+    print("✅ Đã lưu utkface_val_ovr.h5")
 
     # Lưu HDF5 test
     print("\n📦 Tạo utkface_test_ovr.h5...")
-    if not os.path.exists("utkface_test_ovr.h5"):
-        with h5py.File("utkface_test_ovr.h5", "w") as h5f:
-            h5f.attrs["target_size"] = target_size
-            h5f.attrs["num_samples"] = len(test_files)
-            h5f.attrs["has_ovr_labels"] = True
-            save_to_hdf5(
-                h5f,
-                test_files,
-                test_ages,
-                test_genders,
-                test_races,
-                target_size,
-                args.batch_size,
-            )
-        print("✅ Đã lưu utkface_test_ovr.h5")
-    else:
-        print("✅ utkface_test_ovr.h5 đã tồn tại")
+    with h5py.File(test_h5, "w") as h5f:
+        h5f.attrs["target_size"] = target_size
+        h5f.attrs["num_samples"] = len(test_files)
+        h5f.attrs["has_ovr_labels"] = True
+        save_to_hdf5(
+            h5f,
+            test_files,
+            test_ages,
+            test_genders,
+            test_races,
+            target_size,
+            args.batch_size,
+        )
+    print("✅ Đã lưu utkface_test_ovr.h5")
 
     # Tạo datasetfile_ovr
     print("\n📄 Tạo datasetfile_ovr...")
     dataset_info = {
         "nb_train": len(train_files),
+        "nb_val": len(val_files),
         "nb_test": len(test_files),
         "input_shape": [3, target_size[0], target_size[1]],
         "nb_classes": 2,  # Mỗi head OVR là binary
@@ -277,10 +344,12 @@ def main():
     print("✅ HOÀN TẤT UTKFACE OVR!")
     print("=" * 70)
     print(f"Train: {len(train_files):,} samples")
+    print(f"Val  : {len(val_files):,} samples")
     print(f"Test:  {len(test_files):,} samples")
     print(f"Image size: {target_size}")
     print("Files:")
     print("  utkface_train_ovr.h5")
+    print("  utkface_val_ovr.h5")
     print("  utkface_test_ovr.h5")
     print("  datasetfile_ovr")
     print("=" * 70)
