@@ -11,8 +11,8 @@ Files:
 - utkface_test_ovr.h5
 
 Các head OVR (10 binary tasks):
-- gender_female: gender == 0
-- gender_male  : gender == 1
+- gender_female: gender == 1
+- gender_male  : gender == 0
 - age_bin0     : age in [0,18]
 - age_bin1     : age in [19,60]
 - age_bin2     : age in [61,116]
@@ -159,8 +159,9 @@ def load_ovr_labels(indices, category="train"):
     age_bin2 = (ages >= 61).astype(np.int64)
 
     labels = {
-        "gender_female": (genders == 0).astype(np.int64),
-        "gender_male": (genders == 1).astype(np.int64),
+        # UTKFace convention used here: 0=male, 1=female
+        "gender_female": (genders == 1).astype(np.int64),
+        "gender_male": (genders == 0).astype(np.int64),
         "age_bin0": age_bin0,
         "age_bin1": age_bin1,
         "age_bin2": age_bin2,

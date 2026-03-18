@@ -7,7 +7,7 @@ Chuẩn bị UTKFace dataset cho kiến trúc One-vs-Rest (OVR).
 - Giữ đầy đủ:
     * images
     * age  (0..116)
-    * gender (0=female, 1=male)
+    * gender (0=male, 1=female)
     * race (0=White,1=Black,2=Asian,3=Indian,4=Others)
 
 Các head OVR sẽ được định nghĩa trong dataloader_ovr.py:
@@ -39,7 +39,7 @@ def parse_filename(filename):
 
     Returns:
         age (int): 0-116
-        gender (int): 0=Female, 1=Male
+        gender (int): 0=Male, 1=Female
         race (int): 0=White, 1=Black, 2=Asian, 3=Indian, 4=Others
         None if parsing fails
     """
