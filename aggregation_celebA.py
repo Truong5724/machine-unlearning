@@ -1,5 +1,6 @@
 import argparse
 import importlib
+import importlib.util
 import json
 import os
 
@@ -94,12 +95,40 @@ def load_dataset_config(datasetfile_path):
     with open(datasetfile_path, "r") as f:
         datasetfile = json.load(f)
 
+    datasetfile_abs = os.path.abspath(datasetfile_path)
+    dataset_dir = os.path.dirname(datasetfile_abs)
+    dataloader_name = datasetfile["dataloader"]
+
     module_name = ".".join(
         datasetfile_path.replace("\\", "/").split("/")[:-1]
-        + [datasetfile["dataloader"]]
+        + [dataloader_name]
     )
-    dataloader = importlib.import_module(module_name)
+
+    try:
+        dataloader = importlib.import_module(module_name)
+    except Exception:
+        py_path = os.path.join(dataset_dir, f"{dataloader_name}.py")
+        if not os.path.exists(py_path):
+            raise
+        spec = importlib.util.spec_from_file_location(dataloader_name, py_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Cannot load dataloader module from {py_path}")
+        dataloader = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(dataloader)
+
     return datasetfile, dataloader
+
+
+def load_thresholds_file(path):
+    with open(path, "r") as f:
+        payload = json.load(f)
+
+    th = payload.get("thresholds", payload)
+    out = {}
+    for task in OVR_TASKS:
+        if task in th:
+            out[task] = float(th[task])
+    return out
 
 
 def parse_task_list(csv_text):
@@ -151,6 +180,11 @@ def main():
     parser.add_argument("--exclude_tasks", default="", help="CSV task names to drop")
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument(
+        "--thresholds_file",
+        default="",
+        help="Path JSON thresholds per-task (vd: outputs/thresholds:celebA.json)",
+    )
+    parser.add_argument(
         "--tune_thresholds",
         action="store_true",
         help="Tune threshold riêng cho từng task bằng split --tune_split",
@@ -178,6 +212,9 @@ def main():
     parser.add_argument("--save_json", default="", help="Optional output JSON path")
     args = parser.parse_args()
 
+    if args.tune_thresholds and args.thresholds_file:
+        raise ValueError("Không dùng đồng thời --tune_thresholds và --thresholds_file")
+
     unknown = [
         x for x in parse_task_list(args.include_tasks) + parse_task_list(args.exclude_tasks)
         if x not in OVR_TASKS
@@ -198,6 +235,11 @@ def main():
 
     x_tune = None
     y_tune_dict = None
+    thresholds_from_file = {}
+    if args.thresholds_file:
+        if not os.path.exists(args.thresholds_file):
+            raise FileNotFoundError(f"Missing thresholds file: {args.thresholds_file}")
+        thresholds_from_file = load_thresholds_file(args.thresholds_file)
     if args.tune_thresholds:
         tune_key = f"nb_{args.tune_split}"
         if tune_key not in ds:
@@ -231,7 +273,7 @@ def main():
         y_true = np.asarray(y_dict[task], dtype=np.int64)
         y_score = predict_task(model, task, x, batch_size=args.batch_size)
 
-        thr = float(args.threshold)
+        thr = float(thresholds_from_file.get(task, args.threshold))
         if args.tune_thresholds:
             y_tune = np.asarray(y_tune_dict[task], dtype=np.int64)
             y_score_tune = predict_task(model, task, x_tune, batch_size=args.batch_size)
@@ -262,6 +304,8 @@ def main():
     print(f"Device    : {device}")
     if args.tune_thresholds:
         print(f"Threshold : tuned on {args.tune_split} ({args.tune_objective})")
+    elif args.thresholds_file:
+        print(f"Threshold : loaded from {args.thresholds_file}")
     else:
         print(f"Threshold : fixed={args.threshold}")
     print(f"Selected  : {len(eval_tasks)} tasks")
@@ -288,6 +332,7 @@ def main():
         "dataset": args.dataset,
         "split": args.split,
         "threshold": args.threshold,
+        "thresholds_file": args.thresholds_file,
         "tune_thresholds": bool(args.tune_thresholds),
         "tune_split": args.tune_split,
         "tune_objective": args.tune_objective,

@@ -11,10 +11,53 @@ Yêu cầu: pip install h5py tqdm Pillow
 import os
 import json
 import argparse
+import csv
 import numpy as np
 from PIL import Image
 import h5py
 from tqdm import tqdm
+
+
+def _repo_root_from_this_file():
+    # .../datasets/celebA/prepare_data_ovr.py -> repo root
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+def _resolve_existing_path(path, expect="file"):
+    """Resolve a path that must already exist, trying cwd then repo-root relative."""
+    candidates = []
+    if os.path.isabs(path):
+        candidates.append(path)
+    else:
+        candidates.append(path)
+        candidates.append(os.path.join(_repo_root_from_this_file(), path))
+
+    for p in candidates:
+        if expect == "file" and os.path.isfile(p):
+            return os.path.abspath(p)
+        if expect == "dir" and os.path.isdir(p):
+            return os.path.abspath(p)
+
+    raise FileNotFoundError(f"Không tìm thấy {expect}: {path}")
+
+
+def _resolve_output_dir(path):
+    """Resolve output dir without creating it; supports cwd/repo-root relative paths."""
+    candidates = []
+    if os.path.isabs(path):
+        candidates.append(path)
+    else:
+        candidates.append(path)
+        candidates.append(os.path.join(_repo_root_from_this_file(), path))
+
+    for p in candidates:
+        if os.path.isdir(p):
+            return os.path.abspath(p)
+
+    raise FileNotFoundError(
+        f"Output dir không tồn tại: {path}. "
+        "Hãy truyền --output_dir là thư mục đã có sẵn."
+    )
 
 # Danh sách 27 attributes được chọn cho OVR
 OVR_ATTRIBUTES = [
@@ -78,15 +121,58 @@ OVR_TASKS = [
 ]
 
 
+def _to_binary_01(values):
+    """Normalize attribute values to 0/1 from {-1,1} or {0,1}."""
+    arr = np.asarray(values, dtype=np.int32)
+    uniq = set(np.unique(arr).tolist())
+    if uniq.issubset({-1, 1}):
+        return ((arr + 1) // 2).astype(np.int64)
+    if uniq.issubset({0, 1}):
+        return arr.astype(np.int64)
+    raise ValueError(
+        f"Unsupported attribute encoding: {sorted(uniq)}. Expected -1/1 or 0/1."
+    )
+
+
 def load_attributes(attr_file):
-    """Load attribute labels from list_attr_celeba.txt"""
-    with open(attr_file, 'r') as f:
+    """Load attributes from CelebA TXT format or CSV format (image_id,...)."""
+    with open(attr_file, "r", encoding="utf-8") as f:
+        first_line = f.readline().strip()
+
+    # CSV format, e.g. header: image_id,5_o_Clock_Shadow,...
+    if "," in first_line and first_line.lower().startswith("image_id"):
+        with open(attr_file, "r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            if reader.fieldnames is None:
+                raise ValueError("CSV attribute file is missing header")
+
+            all_attr_names = [x for x in reader.fieldnames if x != "image_id"]
+            select_names = []
+            for attr in OVR_ATTRIBUTES:
+                if attr in all_attr_names:
+                    select_names.append(attr)
+                else:
+                    raise ValueError(f"Attribute {attr} không tìm thấy trong CelebA attributes!")
+
+            filenames = []
+            attributes = []
+            for row in reader:
+                filenames.append(row["image_id"])
+                raw_vals = [int(row[name]) for name in select_names]
+                attributes.append(_to_binary_01(raw_vals))
+
+        return np.array(filenames), np.array(attributes, dtype=np.int64), OVR_ATTRIBUTES
+
+    # Original CelebA TXT format
+    with open(attr_file, "r", encoding="utf-8") as f:
         lines = f.readlines()
 
-    num_images = int(lines[0].strip())
+    if len(lines) < 3:
+        raise ValueError("Invalid CelebA TXT attribute file format")
+
+    _ = int(lines[0].strip())
     all_attr_names = lines[1].strip().split()
 
-    # Tìm indices của OVR attributes trong danh sách đầy đủ
     select_indices = []
     for attr in OVR_ATTRIBUTES:
         if attr in all_attr_names:
@@ -98,12 +184,12 @@ def load_attributes(attr_file):
     attributes = []
     for line in lines[2:]:
         parts = line.strip().split()
+        if not parts:
+            continue
         filenames.append(parts[0])
         all_attrs = np.array([int(x) for x in parts[1:]], dtype=np.int32)
         selected_attrs = all_attrs[select_indices]
-        # Convert -1/1 to 0/1
-        selected_attrs = (selected_attrs + 1) // 2
-        attributes.append(selected_attrs)
+        attributes.append(_to_binary_01(selected_attrs))
 
     return np.array(filenames), np.array(attributes, dtype=np.int64), OVR_ATTRIBUTES
 
@@ -257,6 +343,7 @@ def save_to_hdf5_ovr(h5_file, filenames, labels, img_dir, selected_indices,
     h5_file.attrs['input_shape'] = [3, target_size[0], target_size[1]]
     h5_file.attrs['attributes'] = OVR_ATTRIBUTES
     h5_file.attrs['tasks'] = OVR_TASKS
+    return int(global_idx)
 
 
 def create_datasetfile(output_dir, train_samples, val_samples, test_samples):
@@ -330,9 +417,17 @@ def main():
     )
     args = parser.parse_args()
 
+    # Resolve paths robustly (không tự tạo output_dir).
+    args.input_dir = _resolve_existing_path(args.input_dir, expect="dir")
+    args.attr_file = _resolve_existing_path(args.attr_file, expect="file")
+    args.output_dir = _resolve_output_dir(args.output_dir)
+
     print("=" * 80)
     print("CHUẨN BỊ CELEBA OVR DATASET")
     print("=" * 80)
+    print(f"Input dir : {os.path.abspath(args.input_dir)}")
+    print(f"Attr file : {os.path.abspath(args.attr_file)}")
+    print(f"Output dir: {os.path.abspath(args.output_dir)}")
 
     # Load attributes
     print(f"\n📂 Đang load attributes từ {args.attr_file}...")
@@ -371,38 +466,46 @@ def main():
     print(f"\n💾 Đang lưu training set...")
     train_path = os.path.join(args.output_dir, "celeba_ovr_train.h5")
     with h5py.File(train_path, 'w') as f:
-        save_to_hdf5_ovr(
+        train_saved = save_to_hdf5_ovr(
             f, filenames, attributes, args.input_dir, 
             train_indices, (args.target_size, args.target_size)
         )
     print(f"✅ Lưu xong: {train_path}")
+    print(f"   Saved train samples: {train_saved}")
 
     print(f"\n💾 Đang lưu val set...")
     val_path = os.path.join(args.output_dir, "celeba_ovr_val.h5")
     with h5py.File(val_path, 'w') as f:
-        save_to_hdf5_ovr(
+        val_saved = save_to_hdf5_ovr(
             f, filenames, attributes, args.input_dir,
             val_indices, (args.target_size, args.target_size)
         )
     print(f"✅ Lưu xong: {val_path}")
+    print(f"   Saved val samples: {val_saved}")
 
     print(f"\n💾 Đang lưu test set...")
     test_path = os.path.join(args.output_dir, "celeba_ovr_test.h5")
     with h5py.File(test_path, 'w') as f:
-        save_to_hdf5_ovr(
+        test_saved = save_to_hdf5_ovr(
             f, filenames, attributes, args.input_dir,
             test_indices, (args.target_size, args.target_size)
         )
     print(f"✅ Lưu xong: {test_path}")
+    print(f"   Saved test samples: {test_saved}")
 
     # Tạo datasetfile
     print(f"\n📄 Đang tạo datasetfile...")
     create_datasetfile(
         args.output_dir, 
-        len(train_indices), 
-        len(val_indices),
-        len(test_indices)
+        train_saved,
+        val_saved,
+        test_saved,
     )
+
+    if train_saved == 0:
+        raise RuntimeError(
+            "Train set sau khi save = 0. Kiem tra lai --input_dir co dung va co anh hop le."
+        )
 
     print("\n" + "=" * 80)
     print("✅ HOÀN THÀNH!")

@@ -1,335 +1,235 @@
-# CelebA OVR (One-vs-Rest) Multi-Attribute Classification System
+# CelebA OVR Guide
 
-Hệ thống này chuẩn bị và huấn luyện 27 mô hình nhị phân (OVR) cho CelebA dataset, mỗi mô hình dự báo một thuộc tính cụ thể.
+Tai lieu nay huong dan chay toan bo pipeline CelebA OVR theo thu tu:
+1. prepare_data_ovr.py
+2. init_ovr.sh
+3. train_ovr.sh
+4. predict_ovr.sh (val->test)
+5. data_ovr.sh (chi tong hop)
 
-## 📋 Danh Sách 27 Attributes Được Chọn
+Luu y:
+- Pipeline hien tai su dung chien luoc drop-model (bo thuoc tinh = bo shard/model do).
+- Khong dung requestfile cho CelebA OVR.
+- Moi thuoc tinh la bai toan nhi phan doc lap: sigmoid -> so sanh threshold -> yes/no.
 
-1. **male** - Giới tính nam
-2. **young** - Trẻ tuổi
-3. **smiling** - Cười
-4. **mouth_slightly_open** - Miệng hơi mở
-5. **big_lips** - Môi dày
-6. **big_nose** - Mũi to
-7. **pointy_nose** - Mũi nhọn
-8. **high_cheekbones** - Gò má cao
-9. **oval_face** - Gương mặt hình bầu dục
-10. **wavy_hair** - Tóc ngoạn cuộn
-11. **straight_hair** - Tóc thẳng
-12. **bangs** - Tóc mái
-13. **receding_hairline** - Chân tóc lùi
-14. **black_hair** - Tóc đen
-15. **blond_hair** - Tóc vàng
-16. **brown_hair** - Tóc nâu
-17. **eyeglasses** - Kính mắt
-18. **bushy_eyebrows** - Chân mày dày
-19. **arched_eyebrows** - Chân mày cung
-20. **bags_under_eyes** - Quầng thâm dưới mắt
-21. **chubby** - Mặt tròn
-22. **double_chin** - Cằm kép
-23. **wearing_earrings** - Đeo bông tai
-24. **wearing_necklace** - Đeo vòng cổ
-25. **mustache** - Ria mép
-26. **goatee** - Mép dê
-27. **sideburns** - Mái tóc bên má
+## 1) Files lien quan
 
-## 🚀 Quy Trình Sử Dụng
+- Du lieu: datasets/celebA/prepare_data_ovr.py
+- Dataloader: datasets/celebA/dataloader_ovr.py
+- Model: architectures/celeba_ovr.py
+- Partition: celeba_ovr_partition.py
+- Train shard: sisa_celeba_ovr.py
+- Aggregate/eval: aggregation_celebA.py
+- Script data: example-scripts/celeba-sharding/data_ovr.sh
+- Script init: example-scripts/celeba-sharding/init_ovr.sh
+- Script train: example-scripts/celeba-sharding/train_ovr.sh
+- Script predict: example-scripts/celeba-sharding/predict_ovr.sh
 
-### Bước 1: Chuẩn Bị Dữ Liệu (Stratified Multi-Label Sampling)
+## 2) Buoc prepare data OVR (co train/val/test)
 
-Giảm dataset từ 202k → 50k ảnh đã cân bằng:
+Chay tu root repo:
 
 ```bash
 cd /home/tri/machine-unlearning
 
 python datasets/celebA/prepare_data_ovr.py \
-    --input_dir datasets/celebA/img_align_celeba \
-    --attr_file datasets/celebA/list_attr_celeba.txt \
-    --output_dir datasets/celebA \
-    --train_samples 50000 \
-    --test_samples 10000 \
-    --seed 42
+  --input_dir datasets/celebA/img_align_celeba \
+  --attr_file datasets/celebA/list_attr_celeba.txt \
+  --output_dir datasets/celebA \
+  --train_samples 50000 \
+  --val_samples 10000 \
+  --test_samples 10000 \
+  --seed 42
 ```
 
-**Tạo ra:**
-- `datasets/celebA/celeba_ovr_train.h5` - 50,000 ảnh training (64×64)
-- `datasets/celebA/celeba_ovr_test.h5` - 10,000 ảnh test (64×64)
-- `datasets/celebA/datasetfile_ovr` - Metadata file
+Sau khi chay xong se co:
+- datasets/celebA/celeba_ovr_train.h5
+- datasets/celebA/celeba_ovr_val.h5
+- datasets/celebA/celeba_ovr_test.h5
+- datasets/celebA/datasetfile_ovr
 
-**Lưu ý:** Sử dụng stratified multi-label sampling để đảm bảo:
-- Các label combinations xuất hiện cân bằng trong training set
-- Dữ liệu giảm xuống ~50k theo tỷ lệ stratified
-- Giữ nguyên phân phối label distribution
-
-### Bước 2: Khởi Tạo Partitions Cho SISA Training
-
-Tạo 27 shard (mỗi shard = 1 attribute, 1 OVR model):
+## 3) Buoc init partition OVR
 
 ```bash
-python celeba_ovr_partition.py \
-    --container celeba_ovr \
-    --dataset datasets/celebA/datasetfile_ovr \
-    --label 0 \
-    --slices_per_shard 2 \
-    --seed 42
+bash example-scripts/celeba-sharding/init_ovr.sh \
+  celeba_ovr \
+  datasets/celebA/datasetfile_ovr \
+  2 \
+  42
 ```
 
-**Tạo ra:**
-- `containers/celeba_ovr/splitfile.npy` - Danh sách indices cho 27 shard
-- `containers/celeba_ovr/requestfile:0.npy` - Request file (ban đầu rỗng, cho baseline)
-- `containers/celeba_ovr/ovr_slices.npz` - SISA slices (2 slices/shard mặc định)
-- `containers/celeba_ovr/ovr_meta.json` - Metadata (task mapping)
-- `containers/celeba_ovr/cache/` - Thư mục lưu checkpoint
-- `containers/celeba_ovr/times/` - Thư mục lưu thời gian training
-- `containers/celeba_ovr/outputs/` - Thư mục lưu kết quả
+Y nghia tham so:
+- arg1: ten container
+- arg2: datasetfile
+- arg3: so slices moi shard
+- arg4: seed
 
-### Bước 3: Huấn Luyện Các Models OVR
+Mac dinh script tao 27 shard (0..26), moi shard ung voi 1 thuoc tinh.
+Mac dinh moi shard co 2 slices (arg3 = 2).
 
-Huấn luyện từng shard (attribute) theo SISA framework:
+## 4) Buoc train OVR
+
+Train tat ca shard 0..26:
 
 ```bash
-# Shard 0: male
-python sisa_celeba_ovr.py \
-    --container celeba_ovr \
-    --shard 0 \
-    --dataset datasets/celebA/datasetfile_ovr \
-    --label 0 \
-    --epochs 5 \
-    --batch_size 32 \
-    --learning_rate 0.001 \
-    --optimizer adam \
-    --dropout_rate 0.3 \
-    --loss_mode auto
-
-# Shard 1: young
-python sisa_celeba_ovr.py \
-    --container celeba_ovr \
-    --shard 1 \
-    --dataset datasets/celebA/datasetfile_ovr \
-    --label 0 \
-    --epochs 5 \
-    --batch_size 32 \
-    --learning_rate 0.001
+bash example-scripts/celeba-sharding/train_ovr.sh \
+  celeba_ovr \
+  0-26 \
+  datasets/celebA/datasetfile_ovr
 ```
 
-**Tham số quan trọng:**
-- `--shard`: ID shard (0..26)
-- `--epochs`: Số epoch cho mỗi slice
-- `--batch_size`: Batch size (32 khuyến cáo)
-- `--learning_rate`: LR (0.001 mặc định)
-- `--loss_mode`: 'auto' = dùng focal loss cho imbalanced tasks
-- `--optimizer`: 'adam' hoặc 'sgd'
-- `--dropout_rate`: Dropout (0.3 mặc định)
-
-**Để chạy song song tất cả 27 shards:**
+Ban co the doi hyper-params qua bien moi truong:
 
 ```bash
-for shard in {0..26}; do
-    python sisa_celeba_ovr.py \
-        --container celeba_ovr \
-        --shard $shard \
-        --dataset datasets/celebA/datasetfile_ovr \
-        --label 0 \
-        --epochs 5 \
-        --batch_size 32 \
-        --learning_rate 0.001 &
-done
-wait
+EPOCHS=8 \
+BATCH_SIZE=64 \
+LEARNING_RATE=0.0005 \
+LOSS_MODE=auto \
+FOCAL_TASKS=mustache,goatee,sideburns,double_chin,bags_under_eyes \
+bash example-scripts/celeba-sharding/train_ovr.sh \
+  celeba_ovr \
+  0-26 \
+  datasets/celebA/datasetfile_ovr
 ```
 
-### Bước 4: Chuẩn Bị Unlearning Requests
-
-Tạo request file để unlearn một slice dữ liệu:
+Train mot doan shard:
 
 ```bash
-# Unlearn slice 0 của attribute "smiling"
-python celeba_ovr_make_requestfile.py \
-    --container celeba_ovr \
-    --label forget-smiling-slice0 \
-    --task smiling \
-    --slice 0 \
-    --mode overwrite
+bash example-scripts/celeba-sharding/train_ovr.sh \
+  celeba_ovr \
+  10-18 \
+  datasets/celebA/datasetfile_ovr
 ```
 
-**Tham số:**
-- `--task`: Attributes trong danh sách OVR_TASKS
-- `--slice`: ID slice (0 hoặc 1 nếu slices_per_shard=2)
-- `--mode`: 'overwrite' = tạo mới, 'merge' = union với request cũ
-
-**Để merge nhiều requests:**
+Train theo dung vi du ban can (0-2):
 
 ```bash
-# Request 1
-python celeba_ovr_make_requestfile.py \
-    --container celeba_ovr \
-    --label combined-request \
-    --task smiling \
-    --slice 0 \
-    --mode overwrite
-
-# Request 2 (merge)
-python celeba_ovr_make_requestfile.py \
-    --container celeba_ovr \
-    --label combined-request \
-    --task young \
-    --slice 1 \
-    --mode merge
+bash example-scripts/celeba-sharding/train_ovr.sh \
+  celeba_ovr \
+  0-2 \
+  datasets/celebA/datasetfile_ovr
 ```
 
-### Bước 5: Huấn Luyện Với Unlearning
+Script train_ovr.sh hien chap nhan shard_spec linh hoat:
+- Range: 0-2
+- Danh sach: 0,3,8
+- Hon hop: 0-2,6,9-11
 
-Huấn luyện lại các shards theo request:
+## 5) Buoc predict (val -> test + tune threshold)
+
+predict_ovr.sh la script chay val/test:
+- tune threshold rieng tung task tren val
+- danh gia tren test
+- luu thresholds ra file JSON
 
 ```bash
-# Huấn luyện lại shard=3 (attribute=smiling) với unlearning
-python sisa_celeba_ovr.py \
-    --container celeba_ovr \
-    --shard 3 \
-    --dataset datasets/celebA/datasetfile_ovr \
-    --label forget-smiling-slice0 \
-    --epochs 5 \
-    --batch_size 32
+bash example-scripts/celeba-sharding/predict_ovr.sh \
+  celeba_ovr \
+  datasets/celebA/datasetfile_ovr \
+  f1 \
+  val \
+  test \
+  \
+  \
+  outputs/predict_val_test.json
 ```
 
-## 📂 Cấu Trúc File Được Tạo
+Y nghia tham so predict_ovr.sh:
+- arg1: container
+- arg2: datasetfile
+- arg3: objective tune (f1 hoac bacc)
+- arg4: tune split (thuong la val)
+- arg5: eval split (thuong la test)
+- arg6: include_tasks CSV (de trong = all)
+- arg7: exclude_tasks CSV
+- arg8: save_json path (optional)
 
-```
-datasets/celebA/
-├── prepare_data_ovr.py          # Script chuẩn bị dữ liệu
-├── dataloader_ovr.py             # Dataloader OVR
-├── celeba_ovr_train.h5          # Training set HDF5 (50k ảnh)
-├── celeba_ovr_test.h5           # Test set HDF5 (10k ảnh)
-└── datasetfile_ovr              # Metadata JSON
+## 6) Buoc data (chi tong hop ket qua)
 
-architectures/
-├── celeba_ovr.py                # Model architecture & OVR_TASKS
+data_ovr.sh chi tong hop metric bang thresholds da duoc luu tu buoc predict.
 
-containers/celeba_ovr/
-├── splitfile.npy                # Indices cho 27 shards
-├── requestfile:0.npy            # Request file cho baseline
-├── requestfile:*:label.npy      # Request files khác
-├── ovr_slices.npz               # SISA slices
-├── ovr_meta.json                # Task metadata
-├── cache/                        # Checkpoints
-├── times/                        # Training times
-└── outputs/                      # Results & predictions
-
-./
-├── celeba_ovr_partition.py       # Khởi tạo partition
-├── sisa_celeba_ovr.py            # Training script
-└── celeba_ovr_make_requestfile.py # Unlearning request script
-```
-
-## 🔧 Chi Tiết Kỹ Thuật
-
-### Stratified Multi-Label Sampling
-
-`prepare_data_ovr.py` sử dụng stratified sampling để:
-1. Tạo binary string representation cho mỗi sample (vd: "10101...")
-2. Tìm unique label combinations
-3. Sample từ mỗi stratum theo tỷ lệ (~target_samples / total_samples)
-
-**Lợi ích:**
-- Cân bằng dữ liệu: mỗi label combination xuất hiện tương đương
-- Giảm kích thước dataset từ 202k → 50k
-- Giữ nguyên distribution các label hiếm
-
-### SISA Training
-
-- **Shards**: 27 shard, mỗi shard = 1 attribute OVR
-- **Slices**: Mỗi shard chia thành 2 slice (mặc định)
-- **Sequential Training**: Train slice 0 → slice 0+1 → slice 0+1+2...
-- **Checkpoint**: Lưu intermediate models giữa slices
-
-### Loss Functions
-
-- **Binary Cross Entropy (BCE)**: Mặc định cho balanced data
-- **Focal Loss**: Tự động cho imbalanced tasks (pos_weight < 0.5)
-  - `gamma=2.0`: Focusing parameter
-  - `alpha`: Automatic dựa trên class imbalance ratio
-
-## 📊 Monitoring
-
-Kiểm tra tiến trình training:
+Mac dinh doc thresholds tai:
+- containers/celeba_ovr/outputs/thresholds:celebA.json
 
 ```bash
-# Xem logs
-ls -lh containers/celeba_ovr/cache/
-
-# Kiểm tra checkpoint cho shard cụ thể
-ls containers/celeba_ovr/cache/shard-3:0.pt
-
-# Xem metadata
-cat containers/celeba_ovr/ovr_meta.json
-
-# Xem request details
-cat containers/celeba_ovr/requestfile:forget-smiling-slice0.json
+bash example-scripts/celeba-sharding/data_ovr.sh \
+  celeba_ovr \
+  datasets/celebA/datasetfile_ovr \
+  test
 ```
 
-## ⚠️ Lưu Ý quan Trọng
-
-1. **GPU Memory**: Batch size 32 cần ~4-6GB VRAM, điều chỉnh theo GPU của bạn
-2. **Training Time**: 27 shards × 5 epochs ≈ 2-4 giờ trên GPU
-3. **Seed Reproducibility**: Luôn dùng `--seed 42` để reproducible
-4. **Request Files**: Không được xóa, cần giữ lại cho tracking unlearning
-5. **Checkpoint Symlinks**: Không xóa symlinks (`shard-*:*.pt`), chúng trỏ tới actual checkpoint
-
-## 🐛 Troubleshooting
-
-**Lỗi: "Không tìm thấy celeba_ovr_train.h5"**
-→ Chạy `prepare_data_ovr.py` trước
-
-**Lỗi: "Missing ovr_slices.npz"**
-→ Chạy `celeba_ovr_partition.py` trước
-
-**Lỗi: CUDA Out of Memory**
-→ Giảm `--batch_size` hoặc `--epochs`
-
-**Lỗi: "Unsupported OVR task"**
-→ Kiểm tra tên task trong OVR_TASKS (tất cả chữ thường)
-
-## 📝 Example Workflow
+Chi dinh file thresholds + include/exclude:
 
 ```bash
-# 1. Chuẩn bị dữ liệu (lần đầu, mất ~30 phút)
+bash example-scripts/celeba-sharding/data_ovr.sh \
+  celeba_ovr \
+  datasets/celebA/datasetfile_ovr \
+  test \
+  containers/celeba_ovr/outputs/thresholds:celebA.json \
+  male,young,smiling \
+  \
+  outputs/data_aggregate.json
+```
+
+Y nghia tham so data_ovr.sh:
+- arg1: container
+- arg2: datasetfile
+- arg3: split aggregate (train/val/test)
+- arg4: thresholds_file JSON (optional, mac dinh file thresholds cua container)
+- arg5: include_tasks CSV (de trong = all)
+- arg6: exclude_tasks CSV
+- arg7: save_json path (optional)
+
+## 7) Drop thuoc tinh (drop model)
+
+Voi chien luoc hien tai, bo thuoc tinh nghia la bo shard/model do.
+Khong co retrain cho thuoc tinh bi bo.
+
+Vi du bo task smiling (shard 2):
+- Cach 1: khong train shard 2.
+- Cach 2: neu da train, xoa symlink shard do:
+
+```bash
+rm -f containers/celeba_ovr/cache/shard-2.pt
+rm -f containers/celeba_ovr/times/shard-2.time
+```
+
+Khi aggregate/eval, script se tu dong bao missing task va bo qua.
+
+## 8) Mot workflow day du de chay nhanh
+
+```bash
+cd /home/tri/machine-unlearning
+
 python datasets/celebA/prepare_data_ovr.py \
-    --train_samples 50000 --seed 42
+  --train_samples 50000 \
+  --val_samples 10000 \
+  --test_samples 10000 \
+  --seed 42
 
-# 2. Khởi tạo partitions
-python celeba_ovr_partition.py \
-    --container celeba_ovr --label 0 --seed 42
+bash example-scripts/celeba-sharding/init_ovr.sh \
+  celeba_ovr datasets/celebA/datasetfile_ovr 2 42
 
-# 3. Huấn luyện tất cả 27 shards (song song)
-for shard in {0..26}; do
-    python sisa_celeba_ovr.py \
-        --container celeba_ovr \
-        --shard $shard \
-        --dataset datasets/celebA/datasetfile_ovr \
-        --label 0 \
-        --epochs 5 &
-done
-wait
+bash example-scripts/celeba-sharding/train_ovr.sh \
+  celeba_ovr 0-26 datasets/celebA/datasetfile_ovr
 
-# 4. Tạo unlearning request
-python celeba_ovr_make_requestfile.py \
-    --container celeba_ovr \
-    --label forget-young \
-    --task young \
-    --slice 0
+bash example-scripts/celeba-sharding/predict_ovr.sh \
+  celeba_ovr datasets/celebA/datasetfile_ovr f1 val test
 
-# 5. Huấn luyện lại shard tương ứng với unlearning
-python sisa_celeba_ovr.py \
-    --container celeba_ovr \
-    --shard 1 \
-    --label forget-young \
-    --epochs 5
+bash example-scripts/celeba-sharding/data_ovr.sh \
+  celeba_ovr datasets/celebA/datasetfile_ovr test
 ```
 
-## 📚 References
+## 9) Troubleshooting
 
-- **Paper**: SISA Training (Sharded, Isolated, Sliced, Aggregated)
-- **Related**: UTKFace OVR implementation (`sisa_utkface_ovr.py`)
-- **Stratified Sampling**: scikit-learn pipeline
+Loi khong tim thay celeba_ovr_val.h5:
+- Ban chua chay lai prepare_data_ovr.py phien ban co val split.
 
----
-**Tác giả**: Được tạo tự động cho CelebA OVR multi-attribute classification
-**Cập nhật**: 2026-03-25
+Loi shard range:
+- train_ovr.sh chi chap nhan shard trong 0-26.
+
+CUDA out of memory:
+- Giam BATCH_SIZE, hoac giam EPOCHS.
+
+Metric thap:
+- Dung predict_ovr.sh de tune threshold tren val truoc, sau do data_ovr.sh de tong hop.

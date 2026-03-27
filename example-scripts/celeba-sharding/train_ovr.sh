@@ -29,20 +29,63 @@ echo "LR         : ${LEARNING_RATE}"
 echo "Optimizer  : ${OPTIMIZER}"
 echo "Loss mode  : ${LOSS_MODE}"
 echo "Focal tasks: ${FOCAL_TASKS}"
+echo "Unlearn    : drop-model (khong retrain shard bi bo)"
 echo "======================================================================"
 
-IFS='-' read -r start_shard end_shard <<< "${shard_spec}"
-if [[ -z "${start_shard}" || -z "${end_shard}" ]]; then
-  echo "Invalid shard range: ${shard_spec}. Use start-end, e.g. 0-26"
+declare -A shard_seen=()
+selected_shards=()
+
+add_shard() {
+  local s="$1"
+  if (( s < 0 || s > 26 )); then
+    echo "Shard out of bounds: ${s}. Valid range is 0-26"
+    exit 1
+  fi
+  if [[ -z "${shard_seen[$s]+x}" ]]; then
+    shard_seen[$s]=1
+    selected_shards+=("$s")
+  fi
+}
+
+parse_shard_spec() {
+  local spec="$1"
+  IFS=',' read -ra parts <<< "$spec"
+  for part in "${parts[@]}"; do
+    part="${part// /}"
+    if [[ -z "$part" ]]; then
+      continue
+    fi
+
+    if [[ "$part" =~ ^[0-9]+-[0-9]+$ ]]; then
+      local start="${part%-*}"
+      local end="${part#*-}"
+      if (( start > end )); then
+        echo "Invalid range '${part}': start > end"
+        exit 1
+      fi
+      for s in $(seq "$start" "$end"); do
+        add_shard "$s"
+      done
+    elif [[ "$part" =~ ^[0-9]+$ ]]; then
+      add_shard "$part"
+    else
+      echo "Invalid shard spec token: '${part}'"
+      echo "Use format: 0-2 or 0,3,5 or 0-2,8,10-12"
+      exit 1
+    fi
+  done
+}
+
+parse_shard_spec "${shard_spec}"
+
+if (( ${#selected_shards[@]} == 0 )); then
+  echo "No shard selected from spec: ${shard_spec}"
   exit 1
 fi
 
-if (( start_shard < 0 || end_shard > 26 || start_shard > end_shard )); then
-  echo "Shard range out of bounds: ${shard_spec}. Valid range is 0-26"
-  exit 1
-fi
+echo "Resolved  : ${selected_shards[*]}"
 
-for shard in $(seq "${start_shard}" "${end_shard}"); do
+for shard in "${selected_shards[@]}"; do
   echo ""
   echo "--------------------------------------------------------------------"
   echo "Training shard=${shard}"

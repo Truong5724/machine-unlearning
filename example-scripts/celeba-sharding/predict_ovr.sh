@@ -4,24 +4,36 @@ IFS=$'\n\t'
 
 container=${1:-celeba_ovr}
 dataset=${2:-datasets/celebA/datasetfile_ovr}
-split=${3:-test}
-threshold=${4:-0.5}
-include_tasks=${5:-}
-exclude_tasks=${6:-}
-save_json=${7:-}
+objective=${3:-f1}
+tune_split=${4:-val}
+eval_split=${5:-test}
+include_tasks=${6:-}
+exclude_tasks=${7:-}
+save_json=${8:-}
 
-if [[ "${split}" != "train" && "${split}" != "val" && "${split}" != "test" ]]; then
-  echo "Invalid split: ${split}. Use train|val|test"
+if [[ "${objective}" != "f1" && "${objective}" != "bacc" ]]; then
+  echo "Invalid objective: ${objective}. Use f1|bacc"
+  exit 1
+fi
+
+if [[ "${tune_split}" != "train" && "${tune_split}" != "val" && "${tune_split}" != "test" ]]; then
+  echo "Invalid tune split: ${tune_split}. Use train|val|test"
+  exit 1
+fi
+
+if [[ "${eval_split}" != "train" && "${eval_split}" != "val" && "${eval_split}" != "test" ]]; then
+  echo "Invalid eval split: ${eval_split}. Use train|val|test"
   exit 1
 fi
 
 echo "======================================================================"
-echo "PREDICT/EVAL CELEBA OVR (FIXED THRESHOLD)"
+echo "PREDICT CELEBA OVR (VAL->TEST)"
 echo "======================================================================"
 echo "Container   : ${container}"
 echo "Dataset     : ${dataset}"
-echo "Split       : ${split}"
-echo "Threshold   : ${threshold}"
+echo "Objective   : ${objective}"
+echo "Tune split  : ${tune_split}"
+echo "Eval split  : ${eval_split}"
 echo "Include     : ${include_tasks:-<all>}"
 echo "Exclude     : ${exclude_tasks:-<none>}"
 if [[ -n "${save_json}" ]]; then
@@ -32,8 +44,11 @@ echo "======================================================================"
 cmd=(python aggregation_celebA.py
   --container "${container}"
   --dataset "${dataset}"
-  --split "${split}"
-  --threshold "${threshold}")
+  --split "${eval_split}"
+  --tune_thresholds
+  --tune_split "${tune_split}"
+  --tune_objective "${objective}"
+  --save_thresholds)
 
 if [[ -n "${include_tasks}" ]]; then
   cmd+=(--include_tasks "${include_tasks}")

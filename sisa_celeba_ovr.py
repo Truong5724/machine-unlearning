@@ -1,5 +1,7 @@
 import argparse
 import glob
+import importlib
+import importlib.util
 import json
 import os
 from hashlib import sha256
@@ -59,11 +61,28 @@ def get_hash(indices):
 def load_dataset_config(datasetfile_path):
     with open(datasetfile_path, "r") as f:
         datasetfile = json.loads(f.read())
+
+    datasetfile_abs = os.path.abspath(datasetfile_path)
+    dataset_dir = os.path.dirname(datasetfile_abs)
+    dataloader_name = datasetfile["dataloader"]
+
     module_name = ".".join(
         datasetfile_path.replace("\\", "/").split("/")[:-1]
-        + [datasetfile["dataloader"]]
+        + [dataloader_name]
     )
-    dataloader = __import__(module_name, fromlist=["dummy"])
+
+    try:
+        dataloader = importlib.import_module(module_name)
+    except Exception:
+        py_path = os.path.join(dataset_dir, f"{dataloader_name}.py")
+        if not os.path.exists(py_path):
+            raise
+        spec = importlib.util.spec_from_file_location(dataloader_name, py_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Cannot load dataloader module from {py_path}")
+        dataloader = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(dataloader)
+
     return datasetfile, dataloader
 
 
@@ -106,7 +125,11 @@ def train(args):
     input_shape = tuple(datasetfile["input_shape"])
 
     # Tính class imbalance để đặt pos_weight cho BCE (one-vs-rest)
-    nb_train = datasetfile["nb_train"]
+    nb_train = int(getattr(dataloader, "train_size", datasetfile["nb_train"]))
+    if nb_train <= 0:
+        raise RuntimeError(
+            "Train size = 0 trong HDF5. Hay chay lai prepare_data_ovr.py va kiem tra input_dir."
+        )
     all_train_idx = np.arange(nb_train, dtype=np.int64)
     all_labels = dataloader.load_ovr_labels(all_train_idx, category="train")
     y_all = np.asarray(all_labels[task], dtype=np.int64)
