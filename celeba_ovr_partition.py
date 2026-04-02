@@ -69,8 +69,8 @@ def load_ovr_dataloader(datasetfile_path):
         return module
 
 
-def make_balanced_indices(y, all_indices, per_task_samples, seed):
-    """Build per-task 50/50 indices from global train indices.
+def make_ratio_indices(y, all_indices, per_task_samples, seed):
+    """Build per-task indices preserving original pos/neg ratio.
 
     Returns:
         selected_indices: ndarray
@@ -84,9 +84,8 @@ def make_balanced_indices(y, all_indices, per_task_samples, seed):
 
     pos_total = len(pos_idx)
     neg_total = len(neg_idx)
-    max_balanced = 2 * min(pos_total, neg_total)
-
-    if max_balanced == 0:
+    total = pos_total + neg_total
+    if total == 0:
         return np.array([], dtype=np.int64), {
             "pos_total": int(pos_total),
             "neg_total": int(neg_total),
@@ -97,13 +96,37 @@ def make_balanced_indices(y, all_indices, per_task_samples, seed):
             "reduced": True,
         }
 
-    selected_total = int(min(per_task_samples, max_balanced))
-    selected_pos = selected_total // 2
-    selected_neg = selected_total - selected_pos
+    pos_ratio = float(pos_total) / float(total)
+    target_pos = int(round(per_task_samples * pos_ratio))
+    target_pos = min(max(target_pos, 0), per_task_samples)
+    target_neg = int(per_task_samples - target_pos)
+
+    # Scale down target counts if one class is insufficient (without replacement).
+    scale = 1.0
+    if target_pos > 0:
+        scale = min(scale, float(pos_total) / float(target_pos))
+    if target_neg > 0:
+        scale = min(scale, float(neg_total) / float(target_neg))
+    scale = min(scale, 1.0)
+
+    selected_pos = int(round(target_pos * scale))
+    selected_neg = int(round(target_neg * scale))
+    selected_pos = min(selected_pos, pos_total)
+    selected_neg = min(selected_neg, neg_total)
+
+    selected_total = selected_pos + selected_neg
 
     rng = np.random.default_rng(seed)
-    chosen_pos = rng.choice(pos_idx, size=selected_pos, replace=False)
-    chosen_neg = rng.choice(neg_idx, size=selected_neg, replace=False)
+    chosen_pos = (
+        rng.choice(pos_idx, size=selected_pos, replace=False)
+        if selected_pos > 0
+        else np.array([], dtype=np.int64)
+    )
+    chosen_neg = (
+        rng.choice(neg_idx, size=selected_neg, replace=False)
+        if selected_neg > 0
+        else np.array([], dtype=np.int64)
+    )
 
     selected = np.concatenate([chosen_pos, chosen_neg])
     rng.shuffle(selected)
@@ -121,7 +144,7 @@ def make_balanced_indices(y, all_indices, per_task_samples, seed):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Khởi tạo partition cho CelebA OVR (27 shards, mỗi shard 1 head OVR)."
+        description="Khởi tạo partition cho CelebA OVR (27 shards, mỗi shard 1 head OVR, giữ tỉ lệ gốc theo task)."
     )
     parser.add_argument("--container", required=True, help="Tên container (vd: celeba_ovr)")
     parser.add_argument(
@@ -145,12 +168,12 @@ def main():
         "--per_task_samples",
         type=int,
         default=30000,
-        help="Số mẫu mỗi task theo chế độ 50/50 (mặc định 30000)",
+        help="Số mẫu tối đa mỗi task, lấy theo tỉ lệ gốc pos/neg (mặc định 30000)",
     )
     parser.add_argument(
         "--skip_rare",
         action="store_true",
-        help="Bỏ qua task hiếm nếu không đủ per_task_samples để giữ 50/50 tuyệt đối.",
+        help="Bỏ qua task nếu không đủ mẫu để đạt per_task_samples theo tỉ lệ gốc (không lặp mẫu).",
     )
     args = parser.parse_args()
 
@@ -184,13 +207,13 @@ def main():
     slices_dict = {}
     splitfile = np.empty(len(OVR_TASKS), dtype=object)
 
-    print("Created CelebA OVR partitions (per-task 50/50):")
+    print("Created CelebA OVR partitions (per-task original ratio):")
     print(f"  per_task_samples={args.per_task_samples}, slices_per_shard={args.slices_per_shard}")
 
     for shard, name in enumerate(OVR_TASKS):
         y = np.asarray(labels_by_task[name], dtype=np.int64)
 
-        selected_idx, st = make_balanced_indices(
+        selected_idx, st = make_ratio_indices(
             y,
             all_indices,
             per_task_samples=args.per_task_samples,
@@ -241,7 +264,7 @@ def main():
         "tasks": OVR_TASKS,
         "task_by_shard": {str(i): name for i, name in enumerate(OVR_TASKS)},
         "slices_per_shard": args.slices_per_shard,
-        "partition_mode": "per_task_50_50",
+        "partition_mode": "per_task_original_ratio",
         "per_task_samples": args.per_task_samples,
         "skip_rare": bool(args.skip_rare),
     }
