@@ -146,7 +146,7 @@ def analyze_distribution(labels, label_names):
 
 def main():
     parser = argparse.ArgumentParser(description='Chuẩn bị UTKFace dataset')
-    parser.add_argument('--img_dir', default='utkface', help='Thư mục chứa ảnh UTKFace')
+    parser.add_argument('--img_dir', default='UTKFace', help='Thư mục chứa ảnh UTKFace')
     parser.add_argument('--task', default='gender', choices=['gender', 'age_group', 'race'],
                        help='Task: gender (binary), age_group, race')
     parser.add_argument('--target_size', type=int, default=64, help='Resize ảnh (default: 64x64)')

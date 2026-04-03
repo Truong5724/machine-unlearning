@@ -16,3 +16,4 @@ datasets/CIFAR-10/cifar-10-python.tar.gz
 datasets/UTKFace/*.zip
 datasets/UTKFace/UTKFace/*.jpg
 datasets/UTKFace/crop_part1/*.jpg
+*:Zone.Identifier
