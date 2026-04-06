@@ -5,7 +5,7 @@ IFS=$'\n\t'
 container=${1:-celeba_ovr}
 dataset=${2:-datasets/celebA/datasetfile_ovr}
 split=${3:-test}
-thresholds_file=${4:-containers/celeba_ovr/outputs/thresholds:celebA.json}
+thresholds_file=${4:-containers/celeba_ovr/outputs/thresholds}
 include_tasks=${5:-}
 exclude_tasks=${6:-}
 save_json=${7:-}
@@ -15,8 +15,8 @@ if [[ "${split}" != "train" && "${split}" != "val" && "${split}" != "test" ]]; t
   exit 1
 fi
 
-if [[ ! -f "${thresholds_file}" ]]; then
-  echo "Missing thresholds file: ${thresholds_file}"
+if [[ ! -e "${thresholds_file}" ]]; then
+  echo "Missing thresholds file or directory: ${thresholds_file}"
   echo "Run predict_ovr.sh first to generate thresholds."
   exit 1
 fi

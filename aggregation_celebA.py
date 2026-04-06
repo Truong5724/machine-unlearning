@@ -119,16 +119,32 @@ def load_dataset_config(datasetfile_path):
     return datasetfile, dataloader
 
 
-def load_thresholds_file(path):
+def _read_threshold_payload(path):
     with open(path, "r") as f:
-        payload = json.load(f)
+        return json.load(f)
+
+
+def _extract_threshold_value(payload, task):
+    if isinstance(payload, dict) and "threshold" in payload:
+        return float(payload["threshold"])
 
     th = payload.get("thresholds", payload)
-    out = {}
-    for task in OVR_TASKS:
-        if task in th:
-            out[task] = float(th[task])
-    return out
+    if task in th:
+        return float(th[task])
+
+    raise KeyError(f"Threshold for task '{task}' not found in payload")
+
+
+def load_threshold_for_task(path, task):
+    if os.path.isdir(path):
+        task_path = os.path.join(path, f"thresholds:{task}.json")
+        if not os.path.exists(task_path):
+            raise FileNotFoundError(f"Missing threshold file for task '{task}': {task_path}")
+        payload = _read_threshold_payload(task_path)
+        return _extract_threshold_value(payload, task)
+
+    payload = _read_threshold_payload(path)
+    return _extract_threshold_value(payload, task)
 
 
 def parse_task_list(csv_text):
@@ -182,7 +198,7 @@ def main():
     parser.add_argument(
         "--thresholds_file",
         default="",
-        help="Path JSON thresholds per-task (vd: outputs/thresholds:celebA.json)",
+        help="Path JSON thresholds per-task, or directory chứa file thresholds từng task",
     )
     parser.add_argument(
         "--tune_thresholds",
@@ -235,11 +251,8 @@ def main():
 
     x_tune = None
     y_tune_dict = None
-    thresholds_from_file = {}
-    if args.thresholds_file:
-        if not os.path.exists(args.thresholds_file):
-            raise FileNotFoundError(f"Missing thresholds file: {args.thresholds_file}")
-        thresholds_from_file = load_thresholds_file(args.thresholds_file)
+    if args.thresholds_file and not os.path.exists(args.thresholds_file):
+        raise FileNotFoundError(f"Missing thresholds file or directory: {args.thresholds_file}")
     if args.tune_thresholds:
         tune_key = f"nb_{args.tune_split}"
         if tune_key not in ds:
@@ -273,7 +286,9 @@ def main():
         y_true = np.asarray(y_dict[task], dtype=np.int64)
         y_score = predict_task(model, task, x, batch_size=args.batch_size)
 
-        thr = float(thresholds_from_file.get(task, args.threshold))
+        thr = float(args.threshold)
+        if args.thresholds_file:
+            thr = load_threshold_for_task(args.thresholds_file, task)
         if args.tune_thresholds:
             y_tune = np.asarray(y_tune_dict[task], dtype=np.int64)
             y_score_tune = predict_task(model, task, x_tune, batch_size=args.batch_size)
@@ -351,17 +366,21 @@ def main():
         print(f"Saved report: {args.save_json}")
 
     if args.save_thresholds:
-        thr_path = f"containers/{args.container}/outputs/thresholds:celebA.json"
-        payload = {
-            "container": args.container,
-            "dataset": args.dataset,
-            "tune_split": args.tune_split if args.tune_thresholds else None,
-            "objective": args.tune_objective if args.tune_thresholds else None,
-            "thresholds": thresholds_by_task,
-        }
-        with open(thr_path, "w") as f:
-            json.dump(payload, f, indent=2)
-        print(f"Saved thresholds: {thr_path}")
+        thr_dir = f"containers/{args.container}/outputs/thresholds"
+        os.makedirs(thr_dir, exist_ok=True)
+        for task, threshold in thresholds_by_task.items():
+            thr_path = os.path.join(thr_dir, f"thresholds:{task}.json")
+            payload = {
+                "container": args.container,
+                "dataset": args.dataset,
+                "task": task,
+                "threshold": threshold,
+                "tune_split": args.tune_split if args.tune_thresholds else None,
+                "objective": args.tune_objective if args.tune_thresholds else None,
+            }
+            with open(thr_path, "w") as f:
+                json.dump(payload, f, indent=2)
+        print(f"Saved thresholds directory: {thr_dir}")
 
 
 if __name__ == "__main__":

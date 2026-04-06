@@ -148,8 +148,12 @@ Y nghia tham so predict_ovr.sh:
 
 data_ovr.sh chi tong hop metric bang thresholds da duoc luu tu buoc predict.
 
-Mac dinh doc thresholds tai:
-- containers/celeba_ovr/outputs/thresholds:celebA.json
+Mac dinh doc thresholds tai thu muc:
+- containers/celeba_ovr/outputs/thresholds/
+
+Moi task co 1 file rieng, vi du:
+- containers/celeba_ovr/outputs/thresholds/thresholds:young.json
+- containers/celeba_ovr/outputs/thresholds/thresholds:male.json
 
 ```bash
 bash example-scripts/celeba-sharding/data_ovr.sh \
@@ -165,7 +169,7 @@ bash example-scripts/celeba-sharding/data_ovr.sh \
   celeba_ovr \
   datasets/celebA/datasetfile_ovr \
   test \
-  containers/celeba_ovr/outputs/thresholds:celebA.json \
+  containers/celeba_ovr/outputs/thresholds \
   male,young,smiling \
   \
   outputs/data_aggregate.json
@@ -175,7 +179,7 @@ Y nghia tham so data_ovr.sh:
 - arg1: container
 - arg2: datasetfile
 - arg3: split aggregate (train/val/test)
-- arg4: thresholds_file JSON (optional, mac dinh file thresholds cua container)
+- arg4: thresholds_path (optional, mac dinh thu muc thresholds cua container; co the la file legacy JSON hoac thu muc threshold moi)
 - arg5: include_tasks CSV (de trong = all)
 - arg6: exclude_tasks CSV
 - arg7: save_json path (optional)

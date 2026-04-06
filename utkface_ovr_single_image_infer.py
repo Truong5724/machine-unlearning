@@ -92,9 +92,14 @@ def infer_single_image(args):
     preds_bin: Dict[str, int] = {}
     loaded_tasks = []
     missing_tasks = []
+    broken_link_tasks = []
 
     for shard, task in enumerate(OVR_TASKS):
         ckpt = f"containers/{args.container}/cache/shard-{shard}:{args.label}.pt"
+        if os.path.islink(ckpt) and not os.path.exists(ckpt):
+            broken_link_tasks.append(task)
+            missing_tasks.append(task)
+            continue
         if not os.path.exists(ckpt):
             missing_tasks.append(task)
             continue
@@ -130,6 +135,8 @@ def infer_single_image(args):
     print(f"Loaded head: {len(loaded_tasks)}/{len(OVR_TASKS)}")
     if missing_tasks:
         print(f"Missing    : {', '.join(missing_tasks)}")
+    if broken_link_tasks:
+        print(f"Broken link: {', '.join(broken_link_tasks)}")
 
     print("\nPer-head outputs:")
     print(f"{'task':<15} {'prob':>8} {'thr':>8} {'pred':>8}")
@@ -145,24 +152,58 @@ def infer_single_image(args):
     age_tasks = ["age_bin0", "age_bin1", "age_bin2"]
     race_tasks = ["race_white", "race_black", "race_asian", "race_indian", "race_others"]
 
-    if all(t in probs for t in gender_tasks):
-        gender_idx = int(np.argmax([probs[t] for t in gender_tasks]))
-        print(f"Gender     : {'female' if gender_idx == 0 else 'male'}")
-    else:
-        print("Gender     : N/A (thiếu head)")
+    available_gender = [t for t in gender_tasks if t in probs]
+    available_age = [t for t in age_tasks if t in probs]
+    available_race = [t for t in race_tasks if t in probs]
+    missing_race = [t for t in race_tasks if t not in probs]
 
-    if all(t in probs for t in age_tasks):
-        age_idx = int(np.argmax([probs[t] for t in age_tasks]))
-        age_name = ["0-18", "19-60", "61+"][age_idx]
-        print(f"Age bin    : {age_name}")
+    if len(available_gender) > 0:
+        gender_idx = int(np.argmax([probs[t] for t in available_gender]))
+        chosen = available_gender[gender_idx]
+        gender_pred = "female" if chosen == "gender_female" else "male"
+        suffix = ""
+        if len(available_gender) < len(gender_tasks):
+            suffix = f" (partial heads {len(available_gender)}/{len(gender_tasks)})"
+        print(f"Gender     : {gender_pred}{suffix}")
     else:
-        print("Age bin    : N/A (thiếu head)")
+        print("Gender     : N/A (không có head)")
 
-    if all(t in probs for t in race_tasks):
-        race_idx = int(np.argmax([probs[t] for t in race_tasks]))
-        print(f"Race       : {RACE_LABELS[race_idx]}")
+    if len(available_age) > 0:
+        age_idx = int(np.argmax([probs[t] for t in available_age]))
+        chosen = available_age[age_idx]
+        age_map = {
+            "age_bin0": "0-18",
+            "age_bin1": "19-60",
+            "age_bin2": "61+",
+        }
+        age_pred = age_map[chosen]
+        suffix = ""
+        if len(available_age) < len(age_tasks):
+            suffix = f" (partial heads {len(available_age)}/{len(age_tasks)})"
+        print(f"Age bin    : {age_pred}{suffix}")
     else:
-        print("Race       : N/A (thiếu head)")
+        print("Age bin    : N/A (không có head)")
+
+    if len(available_race) > 0:
+        race_idx = int(np.argmax([probs[t] for t in available_race]))
+        chosen = available_race[race_idx]
+        race_map = {
+            "race_white": "white",
+            "race_black": "black",
+            "race_asian": "asian",
+            "race_indian": "indian",
+            "race_others": "others",
+        }
+        race_pred = race_map[chosen]
+        suffix = ""
+        if len(available_race) < len(race_tasks):
+            suffix = f" (partial heads {len(available_race)}/{len(race_tasks)})"
+        print(f"Race       : {race_pred}{suffix}")
+        if missing_race:
+            print(f"Race heads missing: {', '.join(missing_race)}")
+    else:
+        print("Race       : N/A (không có head)")
+        print(f"Race heads missing: {', '.join(missing_race)}")
 
     gt = parse_utkface_filename(args.image)
     if gt is not None:
