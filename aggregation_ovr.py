@@ -188,63 +188,13 @@ def group_accuracy(task_list, y_dict, preds, exclude_task=None):
     return acc, len(tasks)
 
 
-def save_thresholds_per_shard(container, label, tune_enabled, objective, thresholds):
-    """Save thresholds as one file per task/model plus backward-compatible files."""
+def save_thresholds_combined(container, label, tune_enabled, objective, thresholds):
+    """Save thresholds as one combined file for the whole label."""
     out_dir = f"containers/{container}/outputs/thresholds"
     os.makedirs(out_dir, exist_ok=True)
 
-    for shard, task in enumerate(OVR_TASKS):
-        # Preferred new format by task name.
-        task_path = f"{out_dir}/thresholds:{task}.json"
-        with open(task_path, "w") as f:
-            json.dump(
-                {
-                    "label": label,
-                    "shard": shard,
-                    "task": task,
-                    "tuned": bool(tune_enabled),
-                    "objective": objective if tune_enabled else None,
-                    "threshold": float(thresholds[task]),
-                },
-                f,
-                indent=2,
-            )
-
-        # Label-scoped task file (useful when multiple labels coexist).
-        task_label_path = f"{out_dir}/thresholds:{task}:{label}.json"
-        with open(task_label_path, "w") as f:
-            json.dump(
-                {
-                    "label": label,
-                    "shard": shard,
-                    "task": task,
-                    "tuned": bool(tune_enabled),
-                    "objective": objective if tune_enabled else None,
-                    "threshold": float(thresholds[task]),
-                },
-                f,
-                indent=2,
-            )
-
-        # Backward-compatible per-shard file.
-        shard_path = f"{out_dir}/shard-{shard}:{label}.json"
-        with open(shard_path, "w") as f:
-            json.dump(
-                {
-                    "label": label,
-                    "shard": shard,
-                    "task": task,
-                    "tuned": bool(tune_enabled),
-                    "objective": objective if tune_enabled else None,
-                    "threshold": float(thresholds[task]),
-                },
-                f,
-                indent=2,
-            )
-
-    # Combined file in thresholds directory as requested.
-    legacy_path = f"{out_dir}/thresholds:{label}.json"
-    with open(legacy_path, "w") as f:
+    combined_path = f"{out_dir}/thresholds:{label}.json"
+    with open(combined_path, "w") as f:
         json.dump(
             {
                 "label": label,
@@ -256,7 +206,7 @@ def save_thresholds_per_shard(container, label, tune_enabled, objective, thresho
             indent=2,
         )
 
-    return out_dir, legacy_path
+    return out_dir, combined_path
 
 
 def main():
@@ -471,17 +421,14 @@ def main():
     print("Mean head PR-AUC   :", float(np.mean(list(pras.values()))) * 100, "%")
 
     if args.save_thresholds:
-        out_dir, legacy_path = save_thresholds_per_shard(
+        out_dir, legacy_path = save_thresholds_combined(
             args.container,
             args.label,
             args.tune_thresholds,
             args.tune_objective,
             thresholds,
         )
-        print(f"Saved per-task thresholds : {out_dir}/thresholds:<task>.json")
-        print(f"Saved task+label thresholds: {out_dir}/thresholds:<task>:{args.label}.json")
-        print(f"Saved per-shard thresholds: {out_dir}/shard-<id>:{args.label}.json")
-        print(f"Saved legacy thresholds  : {legacy_path}")
+        print(f"Saved thresholds: {legacy_path}")
 
     print("=" * 70)
 

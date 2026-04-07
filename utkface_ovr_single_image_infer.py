@@ -58,46 +58,7 @@ def load_dataset_input_shape(dataset_path: str) -> Tuple[int, int, int]:
 def load_thresholds(container: str, label: str) -> Dict[str, float]:
     thresholds = {task: 0.5 for task in OVR_TASKS}
 
-    # Preferred format: one threshold file per task/model.
-    has_per_task = False
-    for shard, task in enumerate(OVR_TASKS):
-        task_candidates = [
-            f"containers/{container}/outputs/thresholds/thresholds:{task}:{label}.json",
-            f"containers/{container}/outputs/thresholds/thresholds:{task}.json",
-        ]
-        for path in task_candidates:
-            if not os.path.exists(path):
-                continue
-            try:
-                with open(path, "r") as f:
-                    data = json.load(f)
-                thresholds[task] = float(data.get("threshold", 0.5))
-                has_per_task = True
-                break
-            except Exception:
-                pass
-
-    if has_per_task:
-        return thresholds
-
-    # Older format: one threshold file per shard/model.
-    has_per_shard = False
-    for shard, task in enumerate(OVR_TASKS):
-        path = f"containers/{container}/outputs/thresholds/shard-{shard}:{label}.json"
-        if not os.path.exists(path):
-            continue
-        try:
-            with open(path, "r") as f:
-                data = json.load(f)
-            thresholds[task] = float(data.get("threshold", 0.5))
-            has_per_shard = True
-        except Exception:
-            pass
-
-    if has_per_shard:
-        return thresholds
-
-    # Combined file format in thresholds directory.
+    # Preferred format: one combined threshold file for the whole label.
     combined_candidates = [
         f"containers/{container}/outputs/thresholds/thresholds:{label}.json",
         # Backward compatibility with older location.
