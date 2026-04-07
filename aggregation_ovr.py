@@ -154,6 +154,111 @@ def load_preds(container, label, split):
     return preds
 
 
+def apply_exclusion_filter(y_dict, preds, exclude_task):
+    """Drop samples where exclude_task is positive (y==1)."""
+    y_ex = np.asarray(y_dict[exclude_task], dtype=np.int64)
+    keep_mask = (y_ex == 0)
+
+    filtered_y = {}
+    filtered_preds = {}
+    for task in OVR_TASKS:
+        filtered_y[task] = np.asarray(y_dict[task])[keep_mask]
+        filtered_preds[task] = np.asarray(preds[task])[keep_mask]
+
+    removed = int((~keep_mask).sum())
+    kept = int(keep_mask.sum())
+    return filtered_y, filtered_preds, removed, kept
+
+
+def group_accuracy(task_list, y_dict, preds, exclude_task=None):
+    tasks = [t for t in task_list if t in OVR_TASKS]
+    if exclude_task is not None:
+        tasks = [t for t in tasks if t != exclude_task]
+    if len(tasks) == 0:
+        return None, 0
+
+    stack = np.stack([preds[t] for t in tasks], axis=1)
+    y_hat = np.argmax(stack, axis=1)
+
+    y_true = np.zeros_like(y_hat)
+    for i, t in enumerate(tasks):
+        y_true[np.asarray(y_dict[t], dtype=np.int64) == 1] = i
+
+    acc = float((y_hat == y_true).mean())
+    return acc, len(tasks)
+
+
+def save_thresholds_per_shard(container, label, tune_enabled, objective, thresholds):
+    """Save thresholds as one file per task/model plus backward-compatible files."""
+    out_dir = f"containers/{container}/outputs/thresholds"
+    os.makedirs(out_dir, exist_ok=True)
+
+    for shard, task in enumerate(OVR_TASKS):
+        # Preferred new format by task name.
+        task_path = f"{out_dir}/thresholds:{task}.json"
+        with open(task_path, "w") as f:
+            json.dump(
+                {
+                    "label": label,
+                    "shard": shard,
+                    "task": task,
+                    "tuned": bool(tune_enabled),
+                    "objective": objective if tune_enabled else None,
+                    "threshold": float(thresholds[task]),
+                },
+                f,
+                indent=2,
+            )
+
+        # Label-scoped task file (useful when multiple labels coexist).
+        task_label_path = f"{out_dir}/thresholds:{task}:{label}.json"
+        with open(task_label_path, "w") as f:
+            json.dump(
+                {
+                    "label": label,
+                    "shard": shard,
+                    "task": task,
+                    "tuned": bool(tune_enabled),
+                    "objective": objective if tune_enabled else None,
+                    "threshold": float(thresholds[task]),
+                },
+                f,
+                indent=2,
+            )
+
+        # Backward-compatible per-shard file.
+        shard_path = f"{out_dir}/shard-{shard}:{label}.json"
+        with open(shard_path, "w") as f:
+            json.dump(
+                {
+                    "label": label,
+                    "shard": shard,
+                    "task": task,
+                    "tuned": bool(tune_enabled),
+                    "objective": objective if tune_enabled else None,
+                    "threshold": float(thresholds[task]),
+                },
+                f,
+                indent=2,
+            )
+
+    # Combined file in thresholds directory as requested.
+    legacy_path = f"{out_dir}/thresholds:{label}.json"
+    with open(legacy_path, "w") as f:
+        json.dump(
+            {
+                "label": label,
+                "tuned": bool(tune_enabled),
+                "objective": objective if tune_enabled else None,
+                "thresholds": {k: float(v) for k, v in thresholds.items()},
+            },
+            f,
+            indent=2,
+        )
+
+    return out_dir, legacy_path
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Đánh giá UTKFace OVR (10 head binary) trên test set."
@@ -189,6 +294,17 @@ def main():
         choices=["val", "test"],
         help="Split dùng để báo cáo metric cuối.",
     )
+    parser.add_argument(
+        "--exclude_eval_task",
+        default="",
+        choices=[""] + OVR_TASKS,
+        help="Loại mẫu positive của task này khỏi eval split (vd: race_asian).",
+    )
+    parser.add_argument(
+        "--exclude_tune_too",
+        action="store_true",
+        help="Nếu bật, áp dụng cùng lọc loại class cho tune split.",
+    )
     args = parser.parse_args()
 
     ds, dl = load_dataloader(args.dataset)
@@ -208,6 +324,31 @@ def main():
         _, y_tune_dict = dl.load_ovr(tune_idx, category=args.tune_split)
         preds_tune = load_preds(args.container, args.label, args.tune_split)
 
+    exclude_task = args.exclude_eval_task if args.exclude_eval_task else None
+    if exclude_task is not None:
+        y_eval_dict, preds_eval_tmp, removed_eval, kept_eval = apply_exclusion_filter(
+            y_eval_dict,
+            load_preds(args.container, args.label, args.eval_split),
+            exclude_task,
+        )
+        preds_eval = preds_eval_tmp
+
+        if kept_eval == 0:
+            raise ValueError(
+                f"Sau khi loại class {exclude_task}, eval split không còn mẫu nào."
+            )
+
+        if args.tune_thresholds and args.exclude_tune_too:
+            y_tune_dict, preds_tune, removed_tune, kept_tune = apply_exclusion_filter(
+                y_tune_dict,
+                preds_tune,
+                exclude_task,
+            )
+            if kept_tune == 0:
+                raise ValueError(
+                    f"Sau khi loại class {exclude_task}, tune split không còn mẫu nào."
+                )
+
     print("=" * 70)
     print("UTKFACE OVR EVALUATION")
     print("=" * 70)
@@ -217,9 +358,15 @@ def main():
     print(f"Eval split: {args.eval_split}")
     if args.tune_thresholds:
         print(f"Tune split: {args.tune_split}")
+    if exclude_task is not None:
+        print(f"Exclude task from eval positives: {exclude_task}")
+        print(f"Eval kept/removed: {kept_eval}/{removed_eval}")
+        if args.tune_thresholds and args.exclude_tune_too:
+            print(f"Tune kept/removed: {kept_tune}/{removed_tune}")
     print()
 
-    preds_eval = load_preds(args.container, args.label, args.eval_split)
+    if exclude_task is None:
+        preds_eval = load_preds(args.container, args.label, args.eval_split)
 
     # Tính metrics từng head
     accs = {}
@@ -236,6 +383,21 @@ def main():
     print("-" * 70)
 
     for task in OVR_TASKS:
+        if exclude_task is not None and task == exclude_task:
+            if args.tune_thresholds:
+                y_tune = np.asarray(y_tune_dict[task], dtype=np.int64)
+                score_tune = np.asarray(preds_tune[task], dtype=np.float64)
+                thr, _ = tune_threshold(y_tune, score_tune, objective=args.tune_objective)
+            else:
+                thr = 0.5
+
+            thresholds[task] = float(thr)
+            print(
+                f"{task:<15} {thr:7.4f} {'-':>8} {'-':>8} {'-':>8} {'-':>8}  "
+                "(excluded from eval)"
+            )
+            continue
+
         y_true = np.asarray(y_eval_dict[task], dtype=np.int64)
         y_score = np.asarray(preds_eval[task], dtype=np.float64)
 
@@ -264,47 +426,36 @@ def main():
     # Group-level accuracy (gender / age / race)
     print("\nGroup-level accuracy (argmax trong mỗi group):")
 
-    # Gender (2 head)
-    g0 = preds_eval["gender_female"]
-    g1 = preds_eval["gender_male"]
-    gender_hat = (g1 > g0).astype(np.int64)  # 0=female,1=male
-    y_gender = np.where(y_eval_dict["gender_male"] == 1, 1, 0)
-    gender_acc = float((gender_hat == y_gender).mean())
-    print(f"Gender: {gender_acc*100:6.2f}%")
+    gender_acc, g_heads = group_accuracy(
+        ["gender_female", "gender_male"], y_eval_dict, preds_eval, exclude_task=exclude_task
+    )
+    age_acc, a_heads = group_accuracy(
+        ["age_bin0", "age_bin1", "age_bin2"], y_eval_dict, preds_eval, exclude_task=exclude_task
+    )
+    race_acc, r_heads = group_accuracy(
+        ["race_white", "race_black", "race_asian", "race_indian", "race_others"],
+        y_eval_dict,
+        preds_eval,
+        exclude_task=exclude_task,
+    )
 
-    # Age (3 bins)
-    a0 = preds_eval["age_bin0"]
-    a1 = preds_eval["age_bin1"]
-    a2 = preds_eval["age_bin2"]
-    age_stack = np.stack([a0, a1, a2], axis=1)  # (N,3)
-    age_hat = np.argmax(age_stack, axis=1)
-    # ground truth: 0 if age_bin0==1, etc.
-    y_age = np.zeros_like(age_hat)
-    y_age[y_eval_dict["age_bin1"] == 1] = 1
-    y_age[y_eval_dict["age_bin2"] == 1] = 2
-    age_acc = float((age_hat == y_age).mean())
-    print(f"Age bins: {age_acc*100:6.2f}%")
+    if gender_acc is None:
+        print("Gender: N/A (no head after exclusion)")
+    else:
+        suffix = "" if g_heads == 2 else f" (partial heads {g_heads}/2)"
+        print(f"Gender: {gender_acc*100:6.2f}%{suffix}")
 
-    # Race (5 heads)
-    r_stack = np.stack(
-        [
-            preds_eval["race_white"],
-            preds_eval["race_black"],
-            preds_eval["race_asian"],
-            preds_eval["race_indian"],
-            preds_eval["race_others"],
-        ],
-        axis=1,
-    )  # (N,5)
-    race_hat = np.argmax(r_stack, axis=1)  # 0..4
-    # ground truth từ y_dict
-    y_race = np.zeros_like(race_hat)
-    for i, name in enumerate(
-        ["race_white", "race_black", "race_asian", "race_indian", "race_others"]
-    ):
-        y_race[y_eval_dict[name] == 1] = i
-    race_acc = float((race_hat == y_race).mean())
-    print(f"Race   : {race_acc*100:6.2f}%")
+    if age_acc is None:
+        print("Age bins: N/A (no head after exclusion)")
+    else:
+        suffix = "" if a_heads == 3 else f" (partial heads {a_heads}/3)"
+        print(f"Age bins: {age_acc*100:6.2f}%{suffix}")
+
+    if race_acc is None:
+        print("Race   : N/A (no head after exclusion)")
+    else:
+        suffix = "" if r_heads == 5 else f" (partial heads {r_heads}/5)"
+        print(f"Race   : {race_acc*100:6.2f}%{suffix}")
 
     if args.tune_thresholds:
         print(
@@ -320,19 +471,17 @@ def main():
     print("Mean head PR-AUC   :", float(np.mean(list(pras.values()))) * 100, "%")
 
     if args.save_thresholds:
-        path = f"containers/{args.container}/outputs/thresholds:{args.label}.json"
-        with open(path, "w") as f:
-            json.dump(
-                {
-                    "label": args.label,
-                    "tuned": bool(args.tune_thresholds),
-                    "objective": args.tune_objective if args.tune_thresholds else None,
-                    "thresholds": thresholds,
-                },
-                f,
-                indent=2,
-            )
-        print(f"Saved thresholds: {path}")
+        out_dir, legacy_path = save_thresholds_per_shard(
+            args.container,
+            args.label,
+            args.tune_thresholds,
+            args.tune_objective,
+            thresholds,
+        )
+        print(f"Saved per-task thresholds : {out_dir}/thresholds:<task>.json")
+        print(f"Saved task+label thresholds: {out_dir}/thresholds:<task>:{args.label}.json")
+        print(f"Saved per-shard thresholds: {out_dir}/shard-<id>:{args.label}.json")
+        print(f"Saved legacy thresholds  : {legacy_path}")
 
     print("=" * 70)
 

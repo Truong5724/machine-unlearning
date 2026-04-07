@@ -4,6 +4,7 @@ import importlib
 import importlib.util
 import json
 import os
+import shutil
 from hashlib import sha256
 from time import time
 
@@ -118,6 +119,13 @@ def parse_task_set(text):
     return {x.strip() for x in text.split(",") if x.strip()}
 
 
+def save_stable_alias(src_path, alias_path):
+    """Create/update alias_path as a real file copy, never a symlink."""
+    if os.path.exists(alias_path) or os.path.islink(alias_path):
+        os.remove(alias_path)
+    shutil.copy2(src_path, alias_path)
+
+
 def train(args):
     task = get_task(args.shard)
 
@@ -212,10 +220,12 @@ def train(args):
 
         if os.path.exists(ckpt_final):
             if slice_id == len(slice_plan) - 1:
-                shard_link = f"containers/{args.container}/cache/shard-{args.shard}.pt"
-                if os.path.exists(shard_link) or os.path.islink(shard_link):
-                    os.remove(shard_link)
-                os.symlink(f"{slice_hash}.pt", shard_link)
+                shard_ckpt = f"containers/{args.container}/cache/shard-{args.shard}.pt"
+                save_stable_alias(ckpt_final, shard_ckpt)
+
+                time_link = f"containers/{args.container}/times/shard-{args.shard}.time"
+                if os.path.exists(time_final):
+                    save_stable_alias(time_final, time_link)
             continue
 
         start_epoch = 0
@@ -307,15 +317,11 @@ def train(args):
             f.write(f"{cumulative_train_time + elapsed_time}\n")
 
         if slice_id == len(slice_plan) - 1:
-            shard_link = f"containers/{args.container}/cache/shard-{args.shard}.pt"
-            if os.path.exists(shard_link) or os.path.islink(shard_link):
-                os.remove(shard_link)
-            os.symlink(f"{slice_hash}.pt", shard_link)
+            shard_ckpt = f"containers/{args.container}/cache/shard-{args.shard}.pt"
+            save_stable_alias(ckpt_final, shard_ckpt)
 
             time_link = f"containers/{args.container}/times/shard-{args.shard}.time"
-            if os.path.exists(time_link) or os.path.islink(time_link):
-                os.remove(time_link)
-            os.symlink(f"{slice_hash}.time", time_link)
+            save_stable_alias(time_final, time_link)
 
 
 def build_parser():

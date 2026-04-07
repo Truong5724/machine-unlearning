@@ -8,9 +8,11 @@ dataset=${3:-datasets/UTKFace/datasetfile_ovr}
 objective=${4:-f1}
 tune_split=${5:-val}
 eval_split=${6:-test}
+exclude_eval_task=${7:-}
+exclude_tune_too=${8:-false}
 
 if [[ -z "${label}" ]]; then
-  echo "Usage: bash example-scripts/utkface-sharding/data_ovr.sh <label> [container] [datasetfile_ovr] [objective] [tune_split] [eval_split]"
+  echo "Usage: bash example-scripts/utkface-sharding/data_ovr.sh <label> [container] [datasetfile_ovr] [objective] [tune_split] [eval_split] [exclude_eval_task] [exclude_tune_too]"
   exit 1
 fi
 
@@ -29,7 +31,12 @@ if [[ "${eval_split}" != "val" && "${eval_split}" != "test" ]]; then
   exit 1
 fi
 
-python aggregation_ovr.py \
+if [[ "${exclude_tune_too}" != "true" && "${exclude_tune_too}" != "false" ]]; then
+  echo "Invalid exclude_tune_too: ${exclude_tune_too}. Use true or false"
+  exit 1
+fi
+
+cmd=(python aggregation_ovr.py \
   --container "${container}" \
   --label "${label}" \
   --dataset "${dataset}" \
@@ -37,5 +44,15 @@ python aggregation_ovr.py \
   --tune_objective "${objective}" \
   --tune_split "${tune_split}" \
   --eval_split "${eval_split}" \
-  --save_thresholds
+  --save_thresholds)
+
+if [[ -n "${exclude_eval_task}" ]]; then
+  cmd+=(--exclude_eval_task "${exclude_eval_task}")
+fi
+
+if [[ "${exclude_tune_too}" == "true" ]]; then
+  cmd+=(--exclude_tune_too)
+fi
+
+"${cmd[@]}"
 
