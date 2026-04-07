@@ -141,9 +141,30 @@ def get_output_path(container, label, shard, split):
     return f"containers/{container}/outputs/shard-{shard}:{label}:{split}.npy"
 
 
-def load_preds(container, label, split):
+def parse_exclude_tasks(text):
+    if text is None or str(text).strip() == "":
+        return []
+    raw = [x.strip() for x in str(text).split(",") if x.strip()]
+    invalid = [x for x in raw if x not in OVR_TASKS]
+    if invalid:
+        raise ValueError(
+            f"exclude task không hợp lệ: {invalid}. Hợp lệ: {OVR_TASKS}"
+        )
+    seen = set()
+    out = []
+    for t in raw:
+        if t not in seen:
+            out.append(t)
+            seen.add(t)
+    return out
+
+
+def load_preds(container, label, split, skip_tasks=None):
+    skip_tasks = set(skip_tasks or [])
     preds = {}
     for shard, task in enumerate(OVR_TASKS):
+        if task in skip_tasks:
+            continue
         path = get_output_path(container, label, shard, split)
         if not os.path.exists(path):
             raise FileNotFoundError(f"Missing output ({split}): {path}")
@@ -154,15 +175,17 @@ def load_preds(container, label, split):
     return preds
 
 
-def apply_exclusion_filter(y_dict, preds, exclude_task):
-    """Drop samples where exclude_task is positive (y==1)."""
-    y_ex = np.asarray(y_dict[exclude_task], dtype=np.int64)
-    keep_mask = (y_ex == 0)
+def apply_exclusion_filter(y_dict, preds, exclude_tasks):
+    """Drop samples where any excluded task is positive (y==1)."""
+    keep_mask = np.ones(len(np.asarray(y_dict[OVR_TASKS[0]])), dtype=bool)
+    for t in exclude_tasks:
+        keep_mask &= (np.asarray(y_dict[t], dtype=np.int64) == 0)
 
     filtered_y = {}
     filtered_preds = {}
     for task in OVR_TASKS:
         filtered_y[task] = np.asarray(y_dict[task])[keep_mask]
+    for task in preds.keys():
         filtered_preds[task] = np.asarray(preds[task])[keep_mask]
 
     removed = int((~keep_mask).sum())
@@ -170,10 +193,10 @@ def apply_exclusion_filter(y_dict, preds, exclude_task):
     return filtered_y, filtered_preds, removed, kept
 
 
-def group_accuracy(task_list, y_dict, preds, exclude_task=None):
+def group_accuracy(task_list, y_dict, preds, exclude_tasks=None):
+    exclude_set = set(exclude_tasks or [])
     tasks = [t for t in task_list if t in OVR_TASKS]
-    if exclude_task is not None:
-        tasks = [t for t in tasks if t != exclude_task]
+    tasks = [t for t in tasks if t not in exclude_set]
     if len(tasks) == 0:
         return None, 0
 
@@ -245,10 +268,9 @@ def main():
         help="Split dùng để báo cáo metric cuối.",
     )
     parser.add_argument(
-        "--exclude_eval_task",
+        "--exclude_eval_tasks",
         default="",
-        choices=[""] + OVR_TASKS,
-        help="Loại mẫu positive của task này khỏi eval split (vd: race_asian).",
+        help="Danh sách task cần loại khỏi eval, ngăn cách bởi dấu phẩy (vd: race_asian,age_bin1).",
     )
     parser.add_argument(
         "--exclude_tune_too",
@@ -261,6 +283,9 @@ def main():
     eval_idx = np.arange(ds[f"nb_{args.eval_split}"])
     _, y_eval_dict = dl.load_ovr(eval_idx, category=args.eval_split)
 
+    exclude_tasks = parse_exclude_tasks(args.exclude_eval_tasks)
+    exclude_task_set = set(exclude_tasks)
+
     y_tune_dict = None
     preds_tune = None
     if args.tune_thresholds:
@@ -272,31 +297,40 @@ def main():
             )
         tune_idx = np.arange(ds[tune_key])
         _, y_tune_dict = dl.load_ovr(tune_idx, category=args.tune_split)
-        preds_tune = load_preds(args.container, args.label, args.tune_split)
+        preds_tune = load_preds(
+            args.container,
+            args.label,
+            args.tune_split,
+            skip_tasks=exclude_task_set,
+        )
 
-    exclude_task = args.exclude_eval_task if args.exclude_eval_task else None
-    if exclude_task is not None:
+    if exclude_tasks:
         y_eval_dict, preds_eval_tmp, removed_eval, kept_eval = apply_exclusion_filter(
             y_eval_dict,
-            load_preds(args.container, args.label, args.eval_split),
-            exclude_task,
+            load_preds(
+                args.container,
+                args.label,
+                args.eval_split,
+                skip_tasks=exclude_task_set,
+            ),
+            exclude_tasks,
         )
         preds_eval = preds_eval_tmp
 
         if kept_eval == 0:
             raise ValueError(
-                f"Sau khi loại class {exclude_task}, eval split không còn mẫu nào."
+                f"Sau khi loại class {exclude_tasks}, eval split không còn mẫu nào."
             )
 
         if args.tune_thresholds and args.exclude_tune_too:
             y_tune_dict, preds_tune, removed_tune, kept_tune = apply_exclusion_filter(
                 y_tune_dict,
                 preds_tune,
-                exclude_task,
+                exclude_tasks,
             )
             if kept_tune == 0:
                 raise ValueError(
-                    f"Sau khi loại class {exclude_task}, tune split không còn mẫu nào."
+                    f"Sau khi loại class {exclude_tasks}, tune split không còn mẫu nào."
                 )
 
     print("=" * 70)
@@ -308,14 +342,14 @@ def main():
     print(f"Eval split: {args.eval_split}")
     if args.tune_thresholds:
         print(f"Tune split: {args.tune_split}")
-    if exclude_task is not None:
-        print(f"Exclude task from eval positives: {exclude_task}")
+    if exclude_tasks:
+        print(f"Exclude tasks from eval positives: {', '.join(exclude_tasks)}")
         print(f"Eval kept/removed: {kept_eval}/{removed_eval}")
         if args.tune_thresholds and args.exclude_tune_too:
             print(f"Tune kept/removed: {kept_tune}/{removed_tune}")
     print()
 
-    if exclude_task is None:
+    if not exclude_tasks:
         preds_eval = load_preds(args.container, args.label, args.eval_split)
 
     # Tính metrics từng head
@@ -333,8 +367,8 @@ def main():
     print("-" * 70)
 
     for task in OVR_TASKS:
-        if exclude_task is not None and task == exclude_task:
-            if args.tune_thresholds:
+        if task in exclude_task_set:
+            if args.tune_thresholds and task in preds_tune:
                 y_tune = np.asarray(y_tune_dict[task], dtype=np.int64)
                 score_tune = np.asarray(preds_tune[task], dtype=np.float64)
                 thr, _ = tune_threshold(y_tune, score_tune, objective=args.tune_objective)
@@ -377,16 +411,16 @@ def main():
     print("\nGroup-level accuracy (argmax trong mỗi group):")
 
     gender_acc, g_heads = group_accuracy(
-        ["gender_female", "gender_male"], y_eval_dict, preds_eval, exclude_task=exclude_task
+        ["gender_female", "gender_male"], y_eval_dict, preds_eval, exclude_tasks=exclude_tasks
     )
     age_acc, a_heads = group_accuracy(
-        ["age_bin0", "age_bin1", "age_bin2"], y_eval_dict, preds_eval, exclude_task=exclude_task
+        ["age_bin0", "age_bin1", "age_bin2"], y_eval_dict, preds_eval, exclude_tasks=exclude_tasks
     )
     race_acc, r_heads = group_accuracy(
         ["race_white", "race_black", "race_asian", "race_indian", "race_others"],
         y_eval_dict,
         preds_eval,
-        exclude_task=exclude_task,
+        exclude_tasks=exclude_tasks,
     )
 
     if gender_acc is None:
