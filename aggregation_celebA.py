@@ -92,12 +92,17 @@ def binary_metrics(y_true, y_score, threshold=0.5):
     else:
         f1 = 2.0 * precision * recall / (precision + recall)
 
+    roc_auc = roc_auc_score_binary(y_true, y_score)
+    pr_auc = average_precision_score(y_true, y_score)
+
     return {
         "acc": acc,
         "bacc": bacc,
         "f1": f1,
         "precision": precision,
         "recall": recall,
+        "roc_auc": roc_auc,
+        "pr_auc": pr_auc,
         "tp": tp,
         "tn": tn,
         "fp": fp,
@@ -369,8 +374,6 @@ def main():
                 max_threshold=args.max_threshold,
             )
 
-        roc_auc = roc_auc_score_binary(y_true, y_score)
-        pr_auc = average_precision_score(y_true, y_score)
         m = binary_metrics(y_true, y_score, threshold=thr)
         m["n"] = int(len(y_true))
         m["pos_ratio"] = float(np.mean(y_true)) if len(y_true) else 0.0
