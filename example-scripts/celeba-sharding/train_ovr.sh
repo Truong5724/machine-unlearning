@@ -6,7 +6,7 @@ container=${1:-celeba_ovr}
 shard_spec=${2:-0-26}
 dataset=${3:-datasets/celebA/datasetfile_ovr}
 
-EPOCHS=${EPOCHS:-6}
+EPOCHS=${EPOCHS:-50}
 BATCH_SIZE=${BATCH_SIZE:-64}
 LEARNING_RATE=${LEARNING_RATE:-0.0005}
 OPTIMIZER=${OPTIMIZER:-adam}

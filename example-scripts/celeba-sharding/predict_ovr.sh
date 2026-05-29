@@ -4,12 +4,14 @@ IFS=$'\n\t'
 
 container=${1:-celeba_ovr}
 dataset=${2:-datasets/celebA/datasetfile_ovr}
-objective=${3:-f1}
+objective=${3:-bacc}
 tune_split=${4:-val}
 eval_split=${5:-test}
 include_tasks=${6:-}
 exclude_tasks=${7:-}
 save_json=${8:-}
+MIN_THRESHOLD=${MIN_THRESHOLD:-0.05}
+MAX_THRESHOLD=${MAX_THRESHOLD:-1.0}
 
 if [[ "${objective}" != "f1" && "${objective}" != "bacc" ]]; then
   echo "Invalid objective: ${objective}. Use f1|bacc"
@@ -34,6 +36,7 @@ echo "Dataset     : ${dataset}"
 echo "Objective   : ${objective}"
 echo "Tune split  : ${tune_split}"
 echo "Eval split  : ${eval_split}"
+echo "Thr range   : [${MIN_THRESHOLD}, ${MAX_THRESHOLD}]"
 echo "Include     : ${include_tasks:-<all>}"
 echo "Exclude     : ${exclude_tasks:-<none>}"
 if [[ -n "${save_json}" ]]; then
@@ -48,6 +51,8 @@ cmd=(python aggregation_celebA.py
   --tune_thresholds
   --tune_split "${tune_split}"
   --tune_objective "${objective}"
+  --min_threshold "${MIN_THRESHOLD}"
+  --max_threshold "${MAX_THRESHOLD}"
   --save_thresholds)
 
 if [[ -n "${include_tasks}" ]]; then

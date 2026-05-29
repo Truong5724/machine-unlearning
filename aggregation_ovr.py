@@ -18,6 +18,12 @@ OVR_TASKS = [
     "race_others",
 ]
 
+ATTRIBUTE_GROUPS = [
+    ["gender_female", "gender_male"],
+    ["age_bin0", "age_bin1", "age_bin2"],
+    ["race_white", "race_black", "race_asian", "race_indian", "race_others"],
+]
+
 
 def binary_confusion(y_true, y_pred):
     y_true = np.asarray(y_true, dtype=np.int64)
@@ -159,20 +165,23 @@ def parse_exclude_tasks(text):
     return out
 
 
-def load_preds(container, label, split, skip_tasks=None):
+def load_preds(container, label, split, expected_len, skip_tasks=None):
     skip_tasks = set(skip_tasks or [])
     preds = {}
+    missing = []
     for shard, task in enumerate(OVR_TASKS):
         if task in skip_tasks:
             continue
         path = get_output_path(container, label, shard, split)
         if not os.path.exists(path):
-            raise FileNotFoundError(f"Missing output ({split}): {path}")
+            missing.append((shard, task, path))
+            preds[task] = np.zeros(expected_len, dtype=np.float32)
+            continue
         out = np.load(path, allow_pickle=True)
         if out.ndim == 1:
             out = out.reshape(-1, 1)
         preds[task] = out[:, 0]
-    return preds
+    return preds, missing
 
 
 def apply_exclusion_filter(y_dict, preds, exclude_tasks):
@@ -193,12 +202,22 @@ def apply_exclusion_filter(y_dict, preds, exclude_tasks):
     return filtered_y, filtered_preds, removed, kept
 
 
-def group_accuracy(task_list, y_dict, preds, exclude_tasks=None):
+def group_accuracy(task_list, y_dict, preds, exclude_tasks=None, missing_tasks=None):
+    """Compute group accuracy by argmax across a group's heads.
+
+    If all heads for the group are missing/unlearned, return (0.0, 0)
+    so the report shows 0% for that group.
+    """
     exclude_set = set(exclude_tasks or [])
+    missing_set = set(missing_tasks or [])
     tasks = [t for t in task_list if t in OVR_TASKS]
     tasks = [t for t in tasks if t not in exclude_set]
+    # Exclude tasks that are missing/unlearned (they were zero-filled earlier)
+    tasks = [t for t in tasks if t in preds and t not in missing_set]
+
+    # If no available heads remain for this group, return 0.0 (user expectation)
     if len(tasks) == 0:
-        return None, 0
+        return 0.0, 0
 
     stack = np.stack([preds[t] for t in tasks], axis=1)
     y_hat = np.argmax(stack, axis=1)
@@ -209,6 +228,33 @@ def group_accuracy(task_list, y_dict, preds, exclude_tasks=None):
 
     acc = float((y_hat == y_true).mean())
     return acc, len(tasks)
+
+
+def active_tasks_for_mean(attribute_groups, missing_tasks=None, exclude_tasks=None):
+    """Return tasks that should count toward overall mean metrics.
+
+    A whole attribute group is dropped only when every task in that group is
+    missing/unlearned. If only some tasks are missing, the group still counts
+    normally and the missing tasks remain in the mean with their zero metrics.
+    """
+    missing_set = set(missing_tasks or [])
+    exclude_set = set(exclude_tasks or [])
+    active = []
+    for group in attribute_groups:
+        group_tasks = [t for t in group if t in OVR_TASKS and t not in exclude_set]
+        if not group_tasks:
+            continue
+        if all(t in missing_set for t in group_tasks):
+            continue
+        active.extend(group_tasks)
+    return active
+
+
+def mean_over_tasks(metric_map, tasks):
+    values = [float(metric_map[t]) for t in tasks if t in metric_map]
+    if not values:
+        return 0.0
+    return float(np.mean(values))
 
 
 def save_thresholds_combined(container, label, tune_enabled, objective, thresholds):
@@ -288,6 +334,7 @@ def main():
 
     y_tune_dict = None
     preds_tune = None
+    missing_tune_tasks = set()
     if args.tune_thresholds:
         tune_key = f"nb_{args.tune_split}"
         if tune_key not in ds:
@@ -297,25 +344,32 @@ def main():
             )
         tune_idx = np.arange(ds[tune_key])
         _, y_tune_dict = dl.load_ovr(tune_idx, category=args.tune_split)
-        preds_tune = load_preds(
+        preds_tune, missing_tune = load_preds(
             args.container,
             args.label,
             args.tune_split,
+            len(np.asarray(y_tune_dict[OVR_TASKS[0]])),
             skip_tasks=exclude_task_set,
         )
+        missing_tune_tasks = {task for _, task, _ in missing_tune}
+    else:
+        missing_tune = []
+    missing_eval_tasks = set()
 
     if exclude_tasks:
-        y_eval_dict, preds_eval_tmp, removed_eval, kept_eval = apply_exclusion_filter(
+        preds_eval, missing_eval = load_preds(
+            args.container,
+            args.label,
+            args.eval_split,
+            len(np.asarray(y_eval_dict[OVR_TASKS[0]])),
+            skip_tasks=exclude_task_set,
+        )
+        missing_eval_tasks = {task for _, task, _ in missing_eval}
+        y_eval_dict, preds_eval, removed_eval, kept_eval = apply_exclusion_filter(
             y_eval_dict,
-            load_preds(
-                args.container,
-                args.label,
-                args.eval_split,
-                skip_tasks=exclude_task_set,
-            ),
+            preds_eval,
             exclude_tasks,
         )
-        preds_eval = preds_eval_tmp
 
         if kept_eval == 0:
             raise ValueError(
@@ -332,6 +386,14 @@ def main():
                 raise ValueError(
                     f"Sau khi loại class {exclude_tasks}, tune split không còn mẫu nào."
                 )
+    else:
+        preds_eval, missing_eval = load_preds(
+            args.container,
+            args.label,
+            args.eval_split,
+            len(np.asarray(y_eval_dict[OVR_TASKS[0]])),
+        )
+        missing_eval_tasks = {task for _, task, _ in missing_eval}
 
     print("=" * 70)
     print("UTKFACE OVR EVALUATION")
@@ -347,16 +409,20 @@ def main():
         print(f"Eval kept/removed: {kept_eval}/{removed_eval}")
         if args.tune_thresholds and args.exclude_tune_too:
             print(f"Tune kept/removed: {kept_tune}/{removed_tune}")
+    if missing_eval:
+        miss_str = ", ".join(f"{task}@shard{shard}" for shard, task, _ in missing_eval)
+        print(f"Missing eval outputs skipped: {miss_str}")
+    if args.tune_thresholds and missing_tune:
+        miss_str = ", ".join(f"{task}@shard{shard}" for shard, task, _ in missing_tune)
+        print(f"Missing tune outputs skipped: {miss_str}")
     print()
-
-    if not exclude_tasks:
-        preds_eval = load_preds(args.container, args.label, args.eval_split)
 
     # Tính metrics từng head
     accs = {}
     baccs = {}
     f1s = {}
     pras = {}
+    head_supports = {}
     thresholds = {}
 
     print("Per-head metrics:")
@@ -378,7 +444,20 @@ def main():
             thresholds[task] = float(thr)
             print(
                 f"{task:<15} {thr:7.4f} {'-':>8} {'-':>8} {'-':>8} {'-':>8}  "
-                "(excluded from eval)"
+                "(skipped)"
+            )
+            continue
+
+        if task in missing_eval_tasks:
+            thresholds[task] = 0.0
+            accs[task] = 0.0
+            baccs[task] = 0.0
+            f1s[task] = 0.0
+            pras[task] = 0.0
+            head_supports[task] = int(np.sum(np.asarray(y_eval_dict[task], dtype=np.int64) == 1))
+            print(
+                f"{task:<15} {0.0:7.4f} {0.0:8.2f} {0.0:8.2f} {0.0:8.2f} {0.0:8.2f}  "
+                "(missing/unlearned)"
             )
             continue
 
@@ -401,6 +480,7 @@ def main():
         baccs[task] = m["bacc"]
         f1s[task] = m["f1"]
         pras[task] = pr_auc
+        head_supports[task] = int(np.sum(y_true == 1))
 
         print(
             f"{task:<15} {thr:7.4f} {m['acc']*100:8.2f} {m['bacc']*100:8.2f} "
@@ -411,16 +491,25 @@ def main():
     print("\nGroup-level accuracy (argmax trong mỗi group):")
 
     gender_acc, g_heads = group_accuracy(
-        ["gender_female", "gender_male"], y_eval_dict, preds_eval, exclude_tasks=exclude_tasks
+        ["gender_female", "gender_male"],
+        y_eval_dict,
+        preds_eval,
+        exclude_tasks=exclude_tasks,
+        missing_tasks=missing_eval_tasks,
     )
     age_acc, a_heads = group_accuracy(
-        ["age_bin0", "age_bin1", "age_bin2"], y_eval_dict, preds_eval, exclude_tasks=exclude_tasks
+        ["age_bin0", "age_bin1", "age_bin2"],
+        y_eval_dict,
+        preds_eval,
+        exclude_tasks=exclude_tasks,
+        missing_tasks=missing_eval_tasks,
     )
     race_acc, r_heads = group_accuracy(
         ["race_white", "race_black", "race_asian", "race_indian", "race_others"],
         y_eval_dict,
         preds_eval,
         exclude_tasks=exclude_tasks,
+        missing_tasks=missing_eval_tasks,
     )
 
     if gender_acc is None:
@@ -449,10 +538,32 @@ def main():
     else:
         print("\nThreshold tuning: OFF (fixed threshold=0.5)")
 
-    print("Mean head accuracy :", float(np.mean(list(accs.values()))) * 100, "%")
-    print("Mean head bal. acc :", float(np.mean(list(baccs.values()))) * 100, "%")
-    print("Mean head F1       :", float(np.mean(list(f1s.values()))) * 100, "%")
-    print("Mean head PR-AUC   :", float(np.mean(list(pras.values()))) * 100, "%")
+    mean_tasks = active_tasks_for_mean(
+        ATTRIBUTE_GROUPS,
+        missing_tasks=missing_eval_tasks,
+        exclude_tasks=exclude_tasks,
+    )
+
+    print(
+        "Mean head accuracy :",
+        mean_over_tasks(accs, mean_tasks) * 100,
+        "% (skip fully missing attrs)",
+    )
+    support_sum = float(np.sum([float(head_supports[t]) for t in mean_tasks if t in head_supports]))
+    if support_sum > 0:
+        weighted_mean_acc = float(
+            np.sum([
+                float(accs[t]) * float(head_supports[t])
+                for t in mean_tasks
+                if t in accs and t in head_supports
+            ]) / support_sum
+        )
+    else:
+        weighted_mean_acc = 0.0
+    print("Weighted mean acc  :", weighted_mean_acc * 100, "% (pos-support weighted)")
+    print("Mean head bal. acc :", mean_over_tasks(baccs, mean_tasks) * 100, "%")
+    print("Mean head F1       :", mean_over_tasks(f1s, mean_tasks) * 100, "%")
+    print("Mean head PR-AUC   :", mean_over_tasks(pras, mean_tasks) * 100, "%")
 
     if args.save_thresholds:
         out_dir, legacy_path = save_thresholds_combined(

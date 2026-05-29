@@ -57,13 +57,15 @@ def binary_metrics(y_true, y_score, threshold=0.5):
     }
 
 
-def tune_threshold(y_true, y_score, objective="f1"):
+def tune_threshold(y_true, y_score, objective="f1", min_threshold=0.0, max_threshold=1.0):
     """Find best threshold for a binary task according to objective metric."""
     y_true = np.asarray(y_true, dtype=np.int64)
     y_score = np.asarray(y_score, dtype=np.float64)
 
     if objective not in {"f1", "bacc"}:
         raise ValueError("objective must be 'f1' or 'bacc'")
+    if not (0.0 <= min_threshold <= max_threshold <= 1.0):
+        raise ValueError("Require 0.0 <= min_threshold <= max_threshold <= 1.0")
 
     candidates = np.unique(
         np.concatenate(
@@ -73,8 +75,13 @@ def tune_threshold(y_true, y_score, objective="f1"):
             ]
         )
     )
+    candidates = candidates[
+        (candidates >= float(min_threshold)) & (candidates <= float(max_threshold))
+    ]
+    if candidates.size == 0:
+        candidates = np.array([float(min_threshold), float(max_threshold)])
 
-    best_thr = 0.5
+    best_thr = float(np.clip(0.5, min_threshold, max_threshold))
     best_metrics = binary_metrics(y_true, y_score, best_thr)
     best_value = best_metrics[objective]
 
@@ -218,6 +225,18 @@ def main():
         help="Metric mục tiêu khi tune threshold",
     )
     parser.add_argument(
+        "--min_threshold",
+        type=float,
+        default=0.0,
+        help="Ngưỡng thấp nhất khi tune threshold (mặc định 0.0)",
+    )
+    parser.add_argument(
+        "--max_threshold",
+        type=float,
+        default=1.0,
+        help="Ngưỡng cao nhất khi tune threshold (mặc định 1.0)",
+    )
+    parser.add_argument(
         "--save_thresholds",
         action="store_true",
         help="Lưu threshold từng task vào outputs/thresholds:celebA.json",
@@ -230,6 +249,8 @@ def main():
 
     if args.tune_thresholds and args.thresholds_file:
         raise ValueError("Không dùng đồng thời --tune_thresholds và --thresholds_file")
+    if not (0.0 <= args.min_threshold <= args.max_threshold <= 1.0):
+        raise ValueError("Require 0.0 <= min_threshold <= max_threshold <= 1.0")
 
     unknown = [
         x for x in parse_task_list(args.include_tasks) + parse_task_list(args.exclude_tasks)
@@ -292,7 +313,13 @@ def main():
         if args.tune_thresholds:
             y_tune = np.asarray(y_tune_dict[task], dtype=np.int64)
             y_score_tune = predict_task(model, task, x_tune, batch_size=args.batch_size)
-            thr, _ = tune_threshold(y_tune, y_score_tune, objective=args.tune_objective)
+            thr, _ = tune_threshold(
+                y_tune,
+                y_score_tune,
+                objective=args.tune_objective,
+                min_threshold=args.min_threshold,
+                max_threshold=args.max_threshold,
+            )
 
         m = binary_metrics(y_true, y_score, threshold=thr)
         m["n"] = int(len(y_true))
@@ -318,7 +345,10 @@ def main():
     print(f"Split     : {args.split}")
     print(f"Device    : {device}")
     if args.tune_thresholds:
-        print(f"Threshold : tuned on {args.tune_split} ({args.tune_objective})")
+        print(
+            f"Threshold : tuned on {args.tune_split} ({args.tune_objective}), "
+            f"range=[{args.min_threshold:.4f}, {args.max_threshold:.4f}]"
+        )
     elif args.thresholds_file:
         print(f"Threshold : loaded from {args.thresholds_file}")
     else:
@@ -351,6 +381,8 @@ def main():
         "tune_thresholds": bool(args.tune_thresholds),
         "tune_split": args.tune_split,
         "tune_objective": args.tune_objective,
+        "min_threshold": args.min_threshold,
+        "max_threshold": args.max_threshold,
         "selected_tasks": eval_tasks,
         "available_tasks": available,
         "missing_tasks": missing,
