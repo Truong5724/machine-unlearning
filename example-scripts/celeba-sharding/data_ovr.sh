@@ -22,7 +22,7 @@ if [[ ! -e "${thresholds_file}" ]]; then
 fi
 
 echo "======================================================================"
-echo "DATA AGGREGATION CELEBA OVR"
+echo "DATA AGGREGATION CELEBA OVR (ACC/F1/ROC-AUC/PR-AUC)"
 echo "======================================================================"
 echo "Container   : ${container}"
 echo "Dataset     : ${dataset}"
@@ -30,6 +30,7 @@ echo "Split       : ${split}"
 echo "Thresholds  : ${thresholds_file}"
 echo "Include     : ${include_tasks:-<all>}"
 echo "Exclude     : ${exclude_tasks:-<none>}"
+echo "Metrics     : Macro-ACC, Macro-F1, Macro-ROC-AUC, Macro-PR-AUC"
 if [[ -n "${save_json}" ]]; then
   echo "Save JSON   : ${save_json}"
 fi

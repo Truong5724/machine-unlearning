@@ -16,6 +16,10 @@ FOCAL_TASKS=${FOCAL_TASKS:-mustache,goatee,sideburns,double_chin,bags_under_eyes
 FOCAL_GAMMA=${FOCAL_GAMMA:-2.0}
 FOCAL_ALPHA=${FOCAL_ALPHA:--1}
 DROPOUT_RATE=${DROPOUT_RATE:-0.3}
+EARLY_STOP_PATIENCE=${EARLY_STOP_PATIENCE:-5}
+EARLY_STOP_MIN_DELTA=${EARLY_STOP_MIN_DELTA:-0.0}
+EARLY_STOP_SPLIT=${EARLY_STOP_SPLIT:-val}
+EARLY_STOP_RESTORE_BEST=${EARLY_STOP_RESTORE_BEST:-1}
 
 echo "======================================================================"
 echo "TRAIN CELEBA OVR"
@@ -29,6 +33,7 @@ echo "LR         : ${LEARNING_RATE}"
 echo "Optimizer  : ${OPTIMIZER}"
 echo "Loss mode  : ${LOSS_MODE}"
 echo "Focal tasks: ${FOCAL_TASKS}"
+echo "Early stop : split=${EARLY_STOP_SPLIT}, patience=${EARLY_STOP_PATIENCE}, min_delta=${EARLY_STOP_MIN_DELTA}, restore_best=${EARLY_STOP_RESTORE_BEST}"
 echo "Unlearn    : drop-model (khong retrain shard bi bo)"
 echo "======================================================================"
 
@@ -91,20 +96,29 @@ for shard in "${selected_shards[@]}"; do
   echo "Training shard=${shard}"
   echo "--------------------------------------------------------------------"
 
-  python sisa_celeba_ovr.py \
-    --container "${container}" \
-    --dataset "${dataset}" \
-    --shard "${shard}" \
-    --epochs "${EPOCHS}" \
-    --batch_size "${BATCH_SIZE}" \
-    --learning_rate "${LEARNING_RATE}" \
-    --optimizer "${OPTIMIZER}" \
-    --chkpt_interval "${CHKPT_INTERVAL}" \
-    --loss_mode "${LOSS_MODE}" \
-    --focal_tasks "${FOCAL_TASKS}" \
-    --focal_gamma "${FOCAL_GAMMA}" \
-    --focal_alpha "${FOCAL_ALPHA}" \
+  cmd=(python sisa_celeba_ovr.py
+    --container "${container}"
+    --dataset "${dataset}"
+    --shard "${shard}"
+    --epochs "${EPOCHS}"
+    --batch_size "${BATCH_SIZE}"
+    --learning_rate "${LEARNING_RATE}"
+    --optimizer "${OPTIMIZER}"
+    --chkpt_interval "${CHKPT_INTERVAL}"
+    --loss_mode "${LOSS_MODE}"
+    --focal_tasks "${FOCAL_TASKS}"
+    --focal_gamma "${FOCAL_GAMMA}"
+    --focal_alpha "${FOCAL_ALPHA}"
     --dropout_rate "${DROPOUT_RATE}"
+    --early_stop_patience "${EARLY_STOP_PATIENCE}"
+    --early_stop_min_delta "${EARLY_STOP_MIN_DELTA}"
+    --early_stop_split "${EARLY_STOP_SPLIT}")
+
+  if [[ "${EARLY_STOP_RESTORE_BEST}" != "0" && "${EARLY_STOP_RESTORE_BEST}" != "false" ]]; then
+    cmd+=(--early_stop_restore_best)
+  fi
+
+  "${cmd[@]}"
 done
 
 echo ""

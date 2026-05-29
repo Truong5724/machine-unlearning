@@ -15,6 +15,54 @@ def safe_div(num, den):
         return 0.0
     return float(num) / float(den)
 
+def average_precision_score(y_true, y_score):
+    """Compute PR-AUC (Average Precision) without external dependencies."""
+    y_true = np.asarray(y_true, dtype=np.int64)
+    y_score = np.asarray(y_score, dtype=np.float64)
+
+    pos_total = int(np.sum(y_true == 1))
+    if pos_total == 0:
+        return 0.0
+
+    order = np.argsort(-y_score)
+    y_sorted = y_true[order]
+
+    tp_cum = np.cumsum(y_sorted == 1)
+    pred_count = np.arange(1, len(y_sorted) + 1)
+    precision = tp_cum / pred_count
+
+    ap = float(np.sum(precision[y_sorted == 1]) / pos_total)
+    return ap
+
+def roc_auc_score_binary(y_true, y_score):
+    """Compute ROC-AUC using the rank statistic formulation."""
+    y_true = np.asarray(y_true, dtype=np.int64)
+    y_score = np.asarray(y_score, dtype=np.float64)
+
+    pos = int(np.sum(y_true == 1))
+    neg = int(np.sum(y_true == 0))
+    if pos == 0 or neg == 0:
+        return 0.0
+
+    order = np.argsort(y_score)
+    sorted_scores = y_score[order]
+    ranks = np.empty(len(sorted_scores), dtype=np.float64)
+
+    i = 0
+    rank = 1.0
+    while i < len(sorted_scores):
+        j = i + 1
+        while j < len(sorted_scores) and np.isclose(sorted_scores[j], sorted_scores[i]):
+            j += 1
+        avg_rank = (rank + (rank + (j - i) - 1.0)) / 2.0
+        ranks[i:j] = avg_rank
+        rank += (j - i)
+        i = j
+
+    y_sorted = y_true[order]
+    sum_pos_ranks = float(np.sum(ranks[y_sorted == 1]))
+    auc = (sum_pos_ranks - pos * (pos + 1.0) / 2.0) / (pos * neg)
+    return float(auc)
 
 def binary_confusion(y_true, y_pred):
     y_true = np.asarray(y_true, dtype=np.int64)
@@ -321,6 +369,8 @@ def main():
                 max_threshold=args.max_threshold,
             )
 
+        roc_auc = roc_auc_score_binary(y_true, y_score)
+        pr_auc = average_precision_score(y_true, y_score)
         m = binary_metrics(y_true, y_score, threshold=thr)
         m["n"] = int(len(y_true))
         m["pos_ratio"] = float(np.mean(y_true)) if len(y_true) else 0.0
@@ -336,6 +386,8 @@ def main():
 
     macro_acc = float(np.mean([metrics_by_task[t]["acc"] for t in available]))
     macro_f1 = float(np.mean([metrics_by_task[t]["f1"] for t in available]))
+    macro_roc_auc = float(np.mean([metrics_by_task[t]["roc_auc"] for t in available]))
+    macro_pr_auc = float(np.mean([metrics_by_task[t]["pr_auc"] for t in available]))
 
     print("=" * 72)
     print("CELEBA OVR AGGREGATION")
@@ -364,12 +416,14 @@ def main():
         m = metrics_by_task[task]
         print(
             f"{task:<22} {m['threshold']:7.4f} {m['acc']:8.4f} {m['bacc']:8.4f} {m['f1']:8.4f} {m['precision']:8.4f} "
-            f"{m['recall']:8.4f} {100.0*m['pos_ratio']:8.2f}"
+            f"{m['recall']:8.4f} {m['roc_auc']:8.4f} {m['pr_auc']:8.4f} {100.0*m['pos_ratio']:8.2f}"
         )
 
     print("-" * 72)
     print(f"Macro-ACC : {macro_acc:.4f}")
     print(f"Macro-F1  : {macro_f1:.4f}")
+    print(f"Macro-ROC-AUC : {macro_roc_auc:.4f}")
+    print(f"Macro-PR-AUC  : {macro_pr_auc:.4f}")
     print("=" * 72)
 
     report = {
@@ -388,6 +442,8 @@ def main():
         "missing_tasks": missing,
         "macro_acc": macro_acc,
         "macro_f1": macro_f1,
+        "macro_roc_auc": macro_roc_auc,
+        "macro_pr_auc": macro_pr_auc,
         "thresholds": thresholds_by_task,
         "by_task": metrics_by_task,
     }

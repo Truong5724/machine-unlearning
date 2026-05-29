@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 import shutil
+import copy
 from hashlib import sha256
 from time import time
 
@@ -113,6 +114,39 @@ def iter_batches(indices, batch_size, shuffle=True):
         yield indices[i : i + batch_size]
 
 
+def get_split_size(datasetfile, split):
+    key = f"nb_{split}"
+    if key not in datasetfile:
+        raise KeyError(f"{key} không có trong datasetfile")
+    return int(datasetfile[key])
+
+
+@torch.no_grad()
+def evaluate_split_loss(model, dataloader, task, split, batch_size, device, datasetfile, loss_fn):
+    split_size = get_split_size(datasetfile, split)
+    if split_size <= 0:
+        raise RuntimeError(f"Split '{split}' có 0 samples, không thể early stop")
+
+    split_indices = np.arange(split_size, dtype=np.int64)
+    model.eval()
+
+    total_loss = 0.0
+    total_count = 0
+    for batch_ids in iter_batches(split_indices, batch_size, shuffle=False):
+        images, y_dict = dataloader.load_ovr(batch_ids, category=split)
+        x = torch.from_numpy(images).to(device)
+        y = torch.from_numpy(y_dict[task]).float().to(device)
+
+        logits = model.forward_task(x, task)
+        loss = loss_fn(logits, y)
+
+        batch_count = int(y.size(0))
+        total_loss += float(loss.item()) * batch_count
+        total_count += batch_count
+
+    return total_loss / max(total_count, 1)
+
+
 def parse_task_set(text):
     if text is None or text.strip() == "":
         return set()
@@ -204,6 +238,23 @@ def train(args):
             f"[Shard {args.shard}][{task}] loss=bce pos_weight={pos_weight_value:.4f}"
         )
 
+    early_stop_enabled = args.early_stop_patience > 0
+    if early_stop_enabled:
+        if args.early_stop_split not in {"train", "val", "test"}:
+            raise ValueError("early_stop_split phải là train, val hoặc test")
+        split_size = get_split_size(datasetfile, args.early_stop_split)
+        if split_size <= 0:
+            raise RuntimeError(
+                f"Split '{args.early_stop_split}' có 0 samples, không thể early stop"
+            )
+        print(
+            f"[Shard {args.shard}][{task}] early_stop=on split={args.early_stop_split} "
+            f"patience={args.early_stop_patience} min_delta={args.early_stop_min_delta:.6f} "
+            f"restore_best={bool(args.early_stop_restore_best)}"
+        )
+    else:
+        print(f"[Shard {args.shard}][{task}] early_stop=off")
+
     avg_epochs_per_slice = (
         2 * len(slice_plan) / (len(slice_plan) + 1) * args.epochs / len(slice_plan)
     )
@@ -264,6 +315,12 @@ def train(args):
                     )
             loaded = True
 
+        if early_stop_enabled:
+            best_state = copy.deepcopy(model.state_dict())
+            best_val_loss = float("inf")
+            best_epoch = start_epoch - 1
+            patience_left = args.early_stop_patience
+
         for epoch in tqdm(range(start_epoch, slice_epochs), leave=False):
             model.train()
             total = 0
@@ -293,10 +350,37 @@ def train(args):
 
             cumulative_train_time += time() - epoch_start
             acc = 100.0 * correct / max(total, 1)
+            epoch_val_loss = None
+            if early_stop_enabled:
+                epoch_val_loss = evaluate_split_loss(
+                    model,
+                    dataloader,
+                    task,
+                    args.early_stop_split,
+                    args.batch_size,
+                    device,
+                    datasetfile,
+                    loss_fn,
+                )
+                if epoch_val_loss < (best_val_loss - args.early_stop_min_delta):
+                    best_state = copy.deepcopy(model.state_dict())
+                    best_val_loss = epoch_val_loss
+                    best_epoch = epoch
+                    patience_left = args.early_stop_patience
+                else:
+                    patience_left -= 1
             print(
                 f"[Shard {args.shard}][Slice {slice_id}][Epoch {epoch+1}] "
                 f"loss={running_loss:.4f} acc={acc:.2f}%"
+                + (f" val_loss={epoch_val_loss:.6f}" if epoch_val_loss is not None else "")
             )
+
+            if early_stop_enabled and patience_left <= 0:
+                print(
+                    f"[Shard {args.shard}][Slice {slice_id}] Early stopping at epoch {epoch+1}. "
+                    f"Best {args.early_stop_split}_loss={best_val_loss:.6f} at epoch {best_epoch+1}"
+                )
+                break
 
             if (
                 args.chkpt_interval != -1
@@ -311,6 +395,9 @@ def train(args):
                 torch.save(model.state_dict(), tmp_ckpt)
                 with open(tmp_time, "w") as f:
                     f.write(f"{cumulative_train_time + elapsed_time}\n")
+
+        if early_stop_enabled and args.early_stop_restore_best:
+            model.load_state_dict(best_state)
 
         torch.save(model.state_dict(), ckpt_final)
         with open(time_final, "w") as f:
@@ -412,6 +499,28 @@ def build_parser():
         type=int,
         default=-1,
         help="Lưu checkpoint mỗi N epoch (âm = không lưu)"
+    )
+    parser.add_argument(
+        "--early_stop_patience",
+        type=int,
+        default=0,
+        help="Số epoch không cải thiện val loss trước khi dừng sớm (0 = tắt)"
+    )
+    parser.add_argument(
+        "--early_stop_min_delta",
+        type=float,
+        default=0.0,
+        help="Mức giảm loss tối thiểu để xem là có cải thiện"
+    )
+    parser.add_argument(
+        "--early_stop_split",
+        default="val",
+        help="Split dùng để theo dõi loss khi early stopping: train|val|test"
+    )
+    parser.add_argument(
+        "--early_stop_restore_best",
+        action="store_true",
+        help="Khôi phục best checkpoint theo early_stop_split trước khi lưu cuối"
     )
     return parser
 
