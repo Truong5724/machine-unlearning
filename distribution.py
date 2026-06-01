@@ -30,6 +30,13 @@ parser.add_argument(
     help="Location of the datasetfile, default datasets/purchase/datasetfile",
 )
 parser.add_argument("--label", default="latest", help="Label, default latest")
+parser.add_argument(
+    "--unlearn_class",
+    type=int,
+    nargs="+",
+    default=None,
+    help="List of class labels to unlearn (e.g., --unlearn_class 0 1 3)",
+)
 args = parser.parse_args()
 
 # Load dataset metadata.
@@ -167,23 +174,45 @@ if args.requests != None:
             "containers/{}/splitfile.npy".format(args.container), allow_pickle=True
         )
 
-        # Randomly select points to be removed with given distribution at the dataset scale.
-        if args.distribution.split(":")[0] == "exponential":
-            lbd = (
-                float(args.distribution.split(":")[1])
-                if len(args.distribution.split(":")) > 1
-                else -np.log(0.05) / datasetfile["nb_train"]
-            )
-            all_requests = np.random.exponential(1 / lbd, (args.requests,))
-        if args.distribution.split(":")[0] == "pareto":
-            a = (
-                float(args.distribution.split(":")[1])
-                if len(args.distribution.split(":")) > 1
-                else 1.16
-            )
-            all_requests = np.random.pareto(a, (args.requests,))
+        if args.unlearn_class != None:
+            # Unlearn by class: find indices of samples belonging to specified classes
+            dataset_dir = os.path.dirname(args.dataset)
+            
+            import sys
+            sys.path.insert(0, dataset_dir)
+            dataloader = __import__(datasetfile["dataloader"])
+            
+            # Get all training indices and labels
+            all_indices = np.arange(0, datasetfile["nb_train"])
+            _, y_train = dataloader.load(all_indices, category='train')
+            
+            # Find indices of samples belonging to classes to unlearn
+            all_requests = np.array([], dtype=int)
+            for class_label in args.unlearn_class:
+                class_indices = np.where(y_train == class_label)[0]
+                all_requests = np.concatenate((all_requests, class_indices))
+            
+            # Remove duplicates and sort
+            all_requests = np.unique(all_requests)
+            
         else:
-            all_requests = np.random.randint(0, datasetfile["nb_train"], args.requests)
+            # Randomly select points to be removed with given distribution at the dataset scale.
+            if args.distribution.split(":")[0] == "exponential":
+                lbd = (
+                    float(args.distribution.split(":")[1])
+                    if len(args.distribution.split(":")) > 1
+                    else -np.log(0.05) / datasetfile["nb_train"]
+                )
+                all_requests = np.random.exponential(1 / lbd, (args.requests,))
+            if args.distribution.split(":")[0] == "pareto":
+                a = (
+                    float(args.distribution.split(":")[1])
+                    if len(args.distribution.split(":")) > 1
+                    else 1.16
+                )
+                all_requests = np.random.pareto(a, (args.requests,))
+            else:
+                all_requests = np.random.randint(0, datasetfile["nb_train"], args.requests)
 
         requests = []
         # Divide up the new requests among the shards.
@@ -195,3 +224,4 @@ if args.requests != None:
             "containers/{}/requestfile:{}.npy".format(args.container, args.label),
             np.array(requests, dtype=object),
         )
+
