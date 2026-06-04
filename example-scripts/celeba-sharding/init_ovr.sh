@@ -46,7 +46,7 @@ mkdir -p "containers/${container}/times"
 mkdir -p "containers/${container}/outputs"
 echo 0 > "containers/${container}/times/null.time"
 
-cmd=(python celeba_ovr_partition.py
+cmd=(python celeba_ovr_partition_55.py
   --container "${container}"
   --dataset "${dataset}"
   --slices_per_shard "${slices_per_shard}"

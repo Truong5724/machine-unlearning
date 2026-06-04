@@ -10,7 +10,7 @@ echo "Init UTKFace OVR SISA for container=${container}, label=${label}"
 mkdir -p containers/${container}/{cache,times,outputs}
 echo 0 > containers/${container}/times/null.time
 
-python utkface_ovr_partition.py \
+python utkface_ovr_partition_55.py \
   --container ${container} \
   --dataset datasets/UTKFace/datasetfile_ovr \
   --label ${label}

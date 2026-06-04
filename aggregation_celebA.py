@@ -120,33 +120,102 @@ def tune_threshold(y_true, y_score, objective="f1", min_threshold=0.0, max_thres
     if not (0.0 <= min_threshold <= max_threshold <= 1.0):
         raise ValueError("Require 0.0 <= min_threshold <= max_threshold <= 1.0")
 
+    if y_true.size == 0:
+        best_thr = float(np.clip(0.5, min_threshold, max_threshold))
+        return best_thr, binary_metrics(y_true, y_score, best_thr)
+
+    order = np.argsort(y_score, kind="mergesort")
+    y_sorted = y_true[order]
+    score_sorted = y_score[order]
+
+    total_pos = int(np.sum(y_sorted == 1))
+    total_neg = int(y_sorted.size - total_pos)
+    roc_auc = roc_auc_score_binary(y_true, y_score)
+    pr_auc = average_precision_score(y_true, y_score)
+
     candidates = np.unique(
         np.concatenate(
             [
-                y_score,
-                np.array([0.0, 1.0, np.nextafter(0.0, -1.0), np.nextafter(1.0, 2.0)]),
+                score_sorted,
+                np.array([float(min_threshold), float(max_threshold)], dtype=np.float64),
             ]
         )
     )
     candidates = candidates[
         (candidates >= float(min_threshold)) & (candidates <= float(max_threshold))
     ]
+
     if candidates.size == 0:
-        candidates = np.array([float(min_threshold), float(max_threshold)])
+        best_thr = float(np.clip(0.5, min_threshold, max_threshold))
+        return best_thr, binary_metrics(y_true, y_score, best_thr)
 
-    best_thr = float(np.clip(0.5, min_threshold, max_threshold))
-    best_metrics = binary_metrics(y_true, y_score, best_thr)
-    best_value = best_metrics[objective]
+    pos_prefix = np.cumsum(y_sorted == 1)
+    idx = np.searchsorted(score_sorted, candidates, side="left")
+    tp = total_pos - np.where(idx > 0, pos_prefix[idx - 1], 0)
+    predicted_pos = y_sorted.size - idx
+    fp = predicted_pos - tp
+    fn = total_pos - tp
+    tn = total_neg - fp
 
-    for thr in candidates:
-        m = binary_metrics(y_true, y_score, float(thr))
-        value = m[objective]
+    precision = np.divide(
+        tp,
+        tp + fp,
+        out=np.zeros_like(tp, dtype=np.float64),
+        where=(tp + fp) != 0,
+    )
+    recall = np.divide(
+        tp,
+        tp + fn,
+        out=np.zeros_like(tp, dtype=np.float64),
+        where=(tp + fn) != 0,
+    )
+    tnr = np.divide(
+        tn,
+        tn + fp,
+        out=np.zeros_like(tn, dtype=np.float64),
+        where=(tn + fp) != 0,
+    )
+    acc = (tp + tn) / float(y_sorted.size)
+    bacc = 0.5 * (recall + tnr)
+    f1 = np.divide(
+        2.0 * precision * recall,
+        precision + recall,
+        out=np.zeros_like(precision, dtype=np.float64),
+        where=(precision + recall) != 0,
+    )
+
+    if objective == "f1":
+        values = f1
+    else:
+        values = bacc
+
+    best_idx = 0
+    best_thr = float(candidates[0])
+    best_value = float(values[0])
+
+    for idx in range(1, candidates.size):
+        value = float(values[idx])
+        thr = float(candidates[idx])
         if (value > best_value) or (
-            np.isclose(value, best_value) and abs(float(thr) - 0.5) < abs(best_thr - 0.5)
+            np.isclose(value, best_value) and abs(thr - 0.5) < abs(best_thr - 0.5)
         ):
+            best_idx = idx
             best_value = value
-            best_thr = float(thr)
-            best_metrics = m
+            best_thr = thr
+
+    best_metrics = {
+        "acc": float(acc[best_idx]),
+        "bacc": float(bacc[best_idx]),
+        "f1": float(f1[best_idx]),
+        "precision": float(precision[best_idx]),
+        "recall": float(recall[best_idx]),
+        "roc_auc": roc_auc,
+        "pr_auc": pr_auc,
+        "tp": int(tp[best_idx]),
+        "tn": int(tn[best_idx]),
+        "fp": int(fp[best_idx]),
+        "fn": int(fn[best_idx]),
+    }
 
     return best_thr, best_metrics
 

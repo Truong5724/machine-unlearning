@@ -332,7 +332,7 @@ def main():
         "nb_test": len(test_files),
         "input_shape": [3, target_size[0], target_size[1]],
         "nb_classes": 2,  # Mỗi head OVR là binary
-        "dataloader": "dataloader_ovr",
+        "dataloader": "dataloader_ovr_55",
         "storage_format": "hdf5",
     }
 
