@@ -16,10 +16,6 @@ LOSS_MODE=${LOSS_MODE:-auto}
 FOCAL_TASKS=${FOCAL_TASKS:-race_others,age_bin2}
 FOCAL_GAMMA=${FOCAL_GAMMA:-2.0}
 FOCAL_ALPHA=${FOCAL_ALPHA:--1}
-USE_SCHEDULER=${USE_SCHEDULER:-1}
-SCHEDULER_FACTOR=${SCHEDULER_FACTOR:-0.5}
-SCHEDULER_PATIENCE=${SCHEDULER_PATIENCE:-2}
-SCHEDULER_MIN_LR=${SCHEDULER_MIN_LR:-0.00001}
 
 echo "======================================================================"
 echo "TRAIN UTKFACE OVR"
@@ -34,7 +30,6 @@ echo "LR        : ${LR}"
 echo "Dropout   : ${DROPOUT_RATE}"
 echo "Loss mode : ${LOSS_MODE}"
 echo "Focal task: ${FOCAL_TASKS}"
-echo "Scheduler : ${USE_SCHEDULER}"
 echo "======================================================================"
 
 IFS='-' read -r start_shard end_shard <<< "${shard_spec}"
@@ -67,14 +62,10 @@ for shard in $(seq "${start_shard}" "${end_shard}"); do
     --optimizer "${OPTIMIZER}" \
     --dropout_rate "${DROPOUT_RATE}" \
     --chkpt_interval "${CHKPT}" \
-    --use_scheduler \
     --loss_mode "${LOSS_MODE}" \
     --focal_tasks "${FOCAL_TASKS}" \
     --focal_gamma "${FOCAL_GAMMA}" \
-    --focal_alpha "${FOCAL_ALPHA}" \
-    --scheduler_factor "${SCHEDULER_FACTOR}" \
-    --scheduler_patience "${SCHEDULER_PATIENCE}" \
-    --scheduler_min_lr "${SCHEDULER_MIN_LR}"
+    --focal_alpha "${FOCAL_ALPHA}"
 done
 
 echo ""

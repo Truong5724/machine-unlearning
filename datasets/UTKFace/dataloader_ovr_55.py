@@ -110,7 +110,7 @@ def _normalize_indices(indices):
         indices = np.array(indices)
     if indices.ndim == 0:
         indices = np.array([indices])
-    return indices
+    return indices.astype(np.int64)
 
 
 def _apply_transform(images, category):
@@ -149,16 +149,17 @@ def load(indices, category="train"):
         y = np.empty((0,), dtype=np.int64)
         return X, y
 
-    sorted_idx = np.argsort(indices)
-    sorted_indices = indices[sorted_idx]
+    unique_indices, inverse = np.unique(indices, return_inverse=True)
+    sorted_unique_indices = np.sort(unique_indices)
+    unique_to_sorted = {idx: pos for pos, idx in enumerate(sorted_unique_indices)}
+    take_positions = np.array(
+        [unique_to_sorted[idx] for idx in unique_indices], dtype=np.int64
+    )
 
-    X = h5_file["images"][sorted_indices]
+    X_unique = h5_file["images"][sorted_unique_indices]
+    X = X_unique[take_positions][inverse]
     # tạo dummy label 0 cho tương thích
-    y = np.zeros(len(sorted_indices), dtype=np.int64)
-
-    unsort_idx = np.argsort(sorted_idx)
-    X = X[unsort_idx]
-    y = y[unsort_idx]
+    y = np.zeros(len(indices), dtype=np.int64)
 
     X = _apply_transform(X, category)
     return X, y
@@ -186,18 +187,20 @@ def load_ovr_labels(indices, category="train"):
             "race_others": empty,
         }
 
-    sorted_idx = np.argsort(indices)
-    sorted_indices = indices[sorted_idx]
+    unique_indices, inverse = np.unique(indices, return_inverse=True)
+    sorted_unique_indices = np.sort(unique_indices)
+    unique_to_sorted = {idx: pos for pos, idx in enumerate(sorted_unique_indices)}
+    take_positions = np.array(
+        [unique_to_sorted[idx] for idx in unique_indices], dtype=np.int64
+    )
 
-    ages = np.asarray(h5_file["age"][sorted_indices], dtype=np.int64)
-    genders = np.asarray(h5_file["gender"][sorted_indices], dtype=np.int64)
-    races = np.asarray(h5_file["race"][sorted_indices], dtype=np.int64)
+    ages_unique = np.asarray(h5_file["age"][sorted_unique_indices], dtype=np.int64)
+    genders_unique = np.asarray(h5_file["gender"][sorted_unique_indices], dtype=np.int64)
+    races_unique = np.asarray(h5_file["race"][sorted_unique_indices], dtype=np.int64)
 
-    # Unsort để trả về đúng thứ tự yêu cầu
-    unsort_idx = np.argsort(sorted_idx)
-    ages = ages[unsort_idx]
-    genders = genders[unsort_idx]
-    races = races[unsort_idx]
+    ages = ages_unique[take_positions][inverse]
+    genders = genders_unique[take_positions][inverse]
+    races = races_unique[take_positions][inverse]
 
     # Age bins: 0-18, 19-60, 61-116
     ages = np.clip(ages, 0, 116)

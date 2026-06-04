@@ -10,7 +10,6 @@ import torch
 from torch.nn import BCEWithLogitsLoss
 import torch.nn.functional as F
 from torch.optim import Adam, SGD
-from torch.optim.lr_scheduler import ReduceLROnPlateau
 from tqdm import tqdm
 
 from architectures.utkface_ovr import OVRModel, OVR_TASKS
@@ -99,31 +98,6 @@ def make_optimizer(model, name, lr):
     raise ValueError("Unsupported optimizer")
 
 
-@torch.no_grad()
-def evaluate_task_accuracy(model, dataloader, task, eval_split, batch_size, device, datasetfile):
-    key = f"nb_{eval_split}"
-    if key not in datasetfile:
-        raise KeyError(
-            f"{key} không có trong datasetfile. Hãy prepare lại để có split tương ứng."
-        )
-
-    eval_indices = np.arange(datasetfile[key], dtype=np.int64)
-    model.eval()
-
-    total = 0
-    correct = 0
-    for batch_ids in iter_batches(eval_indices, batch_size, shuffle=False):
-        images, y_dict = dataloader.load_ovr(batch_ids, category=eval_split)
-        x = torch.from_numpy(images).to(device)
-        y = torch.from_numpy(y_dict[task]).long().to(device)
-        logits = model.forward_task(x, task)
-        preds = (torch.sigmoid(logits) > 0.5).long()
-        correct += (preds == y).sum().item()
-        total += y.size(0)
-
-    return 100.0 * correct / max(total, 1)
-
-
 def iter_batches(indices, batch_size, shuffle=True):
     indices = np.asarray(indices, dtype=np.int64)
     if shuffle:
@@ -177,15 +151,6 @@ def train(args):
         return
 
     optimizer = make_optimizer(model, args.optimizer, args.learning_rate)
-    reduce_lr = None
-    if args.use_scheduler:
-        reduce_lr = ReduceLROnPlateau(
-            optimizer,
-            mode="max",
-            factor=args.scheduler_factor,
-            patience=args.scheduler_patience,
-            min_lr=args.scheduler_min_lr,
-        )
 
     use_focal = args.loss_mode == "focal" or (
         args.loss_mode == "auto" and task in severe_task_set
@@ -303,23 +268,9 @@ def train(args):
             cumulative_train_time += time() - epoch_start
             acc = 100.0 * correct / max(total, 1)
 
-            val_acc = None
-            if reduce_lr is not None:
-                val_acc = evaluate_task_accuracy(
-                    model,
-                    dataloader,
-                    task,
-                    "val",
-                    args.batch_size,
-                    device,
-                    datasetfile,
-                )
-                reduce_lr.step(val_acc)
-
             print(
                 f"[Shard {args.shard}][Slice {slice_id}][Epoch {epoch+1}] "
                 f"loss={running_loss:.4f} acc={acc:.2f}%"
-                + (f" val_acc={val_acc:.2f}%" if val_acc is not None else "")
             )
 
             if (
@@ -419,29 +370,6 @@ def main():
     parser.add_argument("--optimizer", default="adam")
     parser.add_argument("--dropout_rate", type=float, default=0.3)
     parser.add_argument("--chkpt_interval", type=int, default=5)
-    parser.add_argument(
-        "--use_scheduler",
-        action="store_true",
-        help="Bật ReduceLROnPlateau theo val accuracy của task hiện tại.",
-    )
-    parser.add_argument(
-        "--scheduler_factor",
-        type=float,
-        default=0.5,
-        help="Hệ số giảm learning rate khi plateau.",
-    )
-    parser.add_argument(
-        "--scheduler_patience",
-        type=int,
-        default=2,
-        help="Số epoch chờ trước khi giảm learning rate.",
-    )
-    parser.add_argument(
-        "--scheduler_min_lr",
-        type=float,
-        default=1e-5,
-        help="Learning rate nhỏ nhất khi dùng scheduler.",
-    )
     parser.add_argument(
         "--loss_mode",
         default="auto",
