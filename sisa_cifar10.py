@@ -11,6 +11,7 @@ from time import time
 import json
 from tqdm import tqdm
 import argparse
+import torchvision.transforms as transforms
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -97,27 +98,48 @@ model.to(device)
 
 # Instantiate loss and optimizer.
 loss_fn = CrossEntropyLoss()
-if args.optimizer == "adam":
-    optimizer = Adam(model.parameters(), lr=args.learning_rate)
-elif args.optimizer == "sgd":
-    optimizer = SGD(model.parameters(), lr=args.learning_rate, momentum=0.9, weight_decay=1e-4)
-else:
-    raise "Unsupported optimizer"
+            
+class EarlyStopping:
+    def __init__(self, patience=10, min_delta=0, mode='max'):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.mode = mode
+        self.best_score = None
+        self.counter = 0
+        self.early_stop = False
+
+    def __call__(self, metric):
+        if self.best_score is None:
+            self.best_score = metric
+            return False
+
+        if self.mode == 'max':
+            improvement = metric - self.best_score
+        else:
+            improvement = self.best_score - metric
+
+        if improvement > self.min_delta:
+            self.best_score = metric
+            self.counter = 0
+        else:
+            self.counter += 1
+
+        if self.counter >= self.patience:
+            self.early_stop = True
+
+        return self.early_stop
+
+# Augmentation config.
+train_transform = transforms.Compose([
+    transforms.RandomCrop(32, padding=4),
+    transforms.RandomHorizontalFlip(),
+])
 
 if args.train:
-    # Khởi tạo ReduceLROnPlateau scheduler (dựa trên val_acc)
-    reduce_lr = ReduceLROnPlateauScheduler(optimizer, 
-                                            mode='max', 
-                                            factor=0.5, 
-                                            patience=2, 
-                                            min_lr=0.00001, 
-                                            verbose=1)
-            
     shard_size = sizeOfShard(args.container, args.shard)
     slice_size = shard_size // args.slices
-    avg_epochs_per_slice = (
-        2 * args.slices / (args.slices + 1) * args.epochs / args.slices
-    )
+    avg_epochs_per_slice = args.epochs
+
     loaded = False
 
     for sl in tqdm(range(args.slices)):
@@ -186,14 +208,34 @@ if args.train:
             elif sl == 0:
                 loaded = True
 
+            # Init optimizer
+            if args.optimizer == "adam":
+                optimizer = Adam(model.parameters(), lr=args.learning_rate)
+            elif args.optimizer == "sgd":
+                optimizer = SGD(model.parameters(), lr=args.learning_rate, momentum=0.9, weight_decay=1e-4)
+            else:
+                raise "Unsupported optimizer"
+
+            # Init Scheduler
+            reduce_lr = ReduceLROnPlateauScheduler(optimizer,
+                                                    mode='max', 
+                                                    factor=0.5, 
+                                                    patience=5, 
+                                                    min_lr=1e-5)
+
+            # Init EarlyStopping
+            early_stopping = EarlyStopping(patience=20, min_delta=0.002, mode='min')
+
             # Actual training.
             train_time = 0.0
 
             for epoch in tqdm(range(start_epoch, slice_epochs)):
                 model.train()
 
+                train_loss = 0.0
+                train_batches = 0
+
                 epoch_start_time = time()
-                running_loss = 0.0
 
                 for images, labels in fetchShardBatch(
                     args.container,
@@ -204,8 +246,15 @@ if args.train:
                     until=(sl + 1) * slice_size if sl < args.slices - 1 else None,
                 ):
                     # Convert data to torch format and send to selected device.
-                    gpu_images = torch.from_numpy(images).to(device)
-                    gpu_labels = torch.from_numpy(labels).to(device)  # pylint: disable=no-member
+                    images = torch.from_numpy(images)
+
+                    images = torch.stack([
+                        train_transform(img)
+                        for img in images
+                    ])
+
+                    gpu_images = images.to(device)
+                    gpu_labels = torch.from_numpy(labels).to(device)
 
                     forward_start_time = time()
 
@@ -215,17 +264,24 @@ if args.train:
 
                     optimizer.zero_grad()
                     loss.backward()
-
                     optimizer.step()
 
                     train_time += time() - forward_start_time
-                    running_loss += loss.item()
+
+                    # Calculate train loss for the epoch.
+                    train_loss += loss.item()
+                    train_batches += 1
+
+                train_loss /= train_batches
 
                 ### VALIDATION (to monitor learning rate)
                 model.eval()   
 
                 correct = 0
                 total = 0
+
+                val_loss = 0.0
+                val_batches = 0
 
                 with torch.no_grad():  
                     for val_images, val_labels in fetchValBatch(args.dataset, args.batch_size):
@@ -235,14 +291,24 @@ if args.train:
                         outputs = model(gpu_val_images)
                         preds = torch.argmax(outputs, dim=1)
 
+                        # Calculate validation loss for the epoch.
+                        val_loss += loss.item()
+                        val_batches += 1
+
                         correct += (preds == gpu_val_labels).sum().item()
                         total += gpu_val_labels.size(0)
 
-                acc = 100 * correct / total
-                print(f" [Epoch {epoch+1}] - Loss: {running_loss:.4f} - Val accuracy : {acc:.2f}%")
+                val_loss /= val_batches
+                val_acc = 100 * correct / total
+                print(f" [Epoch {epoch+1}] - Train loss: {train_loss:.4f} - Val loss: {val_loss:.4f} - Val accuracy : {val_acc:.2f}%")
 
-                # Cập nhật ReduceLROnPlateau scheduler dựa trên val_acc
-                reduce_lr.step(acc)
+                # Check early stopping
+                if early_stopping(val_loss):
+                    print("Early stopping triggered!")
+                    break
+
+                # Cập nhật ReduceLROnPlateau scheduler dựa trên val_loss
+                reduce_lr.step(val_loss)
 
                 # Create a checkpoint every chkpt_interval.
                 if (
