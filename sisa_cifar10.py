@@ -37,9 +37,9 @@ parser.add_argument(
 )
 parser.add_argument(
     "--dropout_rate",
-    default=0.4,
+    default=0.2,
     type=float,
-    help="Dropout rate, if relevant, default 0.4",
+    help="Dropout rate, if relevant, default 0.2",
 )
 parser.add_argument(
     "--learning_rate", default=0.001, type=float, help="Learning rate, default 0.001"
