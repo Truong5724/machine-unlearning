@@ -69,8 +69,8 @@ def load_ovr_dataloader(datasetfile_path):
         return module
 
 
-def make_balanced_indices(y, all_indices, target_pos_samples, seed):
-    """Build per-task indices with balanced positive/negative counts.
+def make_balanced_indices(y, all_indices, per_task_samples, target_pos_samples, seed):
+    """Build per-task indices with a fixed 30k target and balanced pos/neg.
 
     Returns:
         selected_indices: ndarray
@@ -90,6 +90,7 @@ def make_balanced_indices(y, all_indices, target_pos_samples, seed):
             "pos_total": int(pos_total),
             "neg_total": int(neg_total),
             "target_pos": int(target_pos_samples),
+            "target_total": int(per_task_samples),
             "selected_total": 0,
             "selected_pos": 0,
             "selected_neg": 0,
@@ -97,9 +98,8 @@ def make_balanced_indices(y, all_indices, target_pos_samples, seed):
         }
 
     selected_pos = min(int(target_pos_samples), pos_total)
-    selected_neg = min(selected_pos, neg_total)
-    selected_pos = min(selected_pos, selected_neg)
-    selected_neg = selected_pos
+    selected_neg = int(per_task_samples - selected_pos)
+    selected_neg = max(selected_neg, 0)
 
     selected_total = int(selected_pos + selected_neg)
 
@@ -110,7 +110,7 @@ def make_balanced_indices(y, all_indices, target_pos_samples, seed):
         else np.array([], dtype=np.int64)
     )
     chosen_neg = (
-        rng.choice(neg_idx, size=selected_neg, replace=False)
+        rng.choice(neg_idx, size=selected_neg, replace=selected_neg > neg_total)
         if selected_neg > 0
         else np.array([], dtype=np.int64)
     )
@@ -122,16 +122,18 @@ def make_balanced_indices(y, all_indices, target_pos_samples, seed):
         "pos_total": int(pos_total),
         "neg_total": int(neg_total),
         "target_pos": int(target_pos_samples),
+        "target_total": int(per_task_samples),
         "selected_total": int(selected_total),
         "selected_pos": int(selected_pos),
         "selected_neg": int(selected_neg),
         "reduced": bool(selected_pos < target_pos_samples),
+        "oversampled_neg": bool(selected_neg > neg_total),
     }
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Khởi tạo partition cho CelebA OVR (27 shards, mỗi shard 1 head OVR, giữ tỉ lệ gốc theo task)."
+        description="Khởi tạo partition cho CelebA OVR (27 shards, mỗi shard 1 head OVR, cố định 30k ảnh/shard)."
     )
     parser.add_argument("--container", required=True, help="Tên container (vd: celeba_ovr)")
     parser.add_argument(
@@ -212,6 +214,7 @@ def main():
         selected_idx, st = make_balanced_indices(
             y,
             all_indices,
+            per_task_samples=args.per_task_samples,
             target_pos_samples=args.target_pos_samples,
             seed=args.seed + shard,
         )
@@ -249,6 +252,7 @@ def main():
             f"  {name}: status={status}, selected={st['selected_total']} "
             f"(pos={st['selected_pos']}, neg={st['selected_neg']}), "
             f"pool(pos={st['pos_total']}, neg={st['neg_total']}), "
+            f"oversampled_neg={st['oversampled_neg']}, "
             f"slice_sizes={[len(s) for s in slices_obj]}, "
             f"slice_pos={pos_per_slice}, slice_neg={neg_per_slice}"
         )
@@ -260,7 +264,7 @@ def main():
         "tasks": OVR_TASKS,
         "task_by_shard": {str(i): name for i, name in enumerate(OVR_TASKS)},
         "slices_per_shard": args.slices_per_shard,
-        "partition_mode": "balanced_pos_neg_cap",
+        "partition_mode": "fixed_30k_balanced",
         "per_task_samples": args.per_task_samples,
         "target_pos_samples": args.target_pos_samples,
         "skip_rare": bool(args.skip_rare),
