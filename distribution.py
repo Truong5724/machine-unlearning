@@ -196,6 +196,7 @@ if args.requests != None:
             all_requests = np.unique(all_requests)
             
         else:
+            np.random.seed(1)
             # Randomly select points to be removed with given distribution at the dataset scale.
             if args.distribution.split(":")[0] == "exponential":
                 lbd = (

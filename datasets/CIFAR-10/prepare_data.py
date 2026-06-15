@@ -34,7 +34,7 @@ test_images, test_labels = load_cifar_batch(f"cifar-10-batches-py/test_batch")
 from sklearn.model_selection import train_test_split
 
 if not os.path.exists(f'cifar{num_class}_train.npy'):
-    X_train, X_val, y_train, y_val = train_test_split(all_images, all_labels, test_size=0.1, stratify=all_labels)
+    X_train, X_val, y_train, y_val = train_test_split(all_images, all_labels, test_size=0.1, random_state=1, stratify=all_labels)
     np.save(f'cifar{num_class}_train.npy', {'X': X_train, 'y': y_train})
     np.save(f'cifar{num_class}_val.npy', {'X': X_val, 'y': y_val})
 
