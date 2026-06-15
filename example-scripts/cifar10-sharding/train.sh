@@ -13,8 +13,8 @@ for i in $(seq 0 "$((${shards}-1))"); do
 done
 
 # Uncomment to run unlearning scenario: unlearn classes 0, 1, and 2
-classes="0 1 2"
-label="class_$(echo ${classes} | tr ' ' ',')"
+classes=(0 1 2)
+label="class_$(IFS=,; echo "${classes[*]}")"
 
 for i in $(seq 0 "$((${shards}-1))"); do
     echo "shard: $((${i}+1))/${shards}, unlearning classes: ${label}"

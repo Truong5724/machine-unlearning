@@ -17,8 +17,8 @@ for j in 0; do
 done
 
 # Uncomment to run unlearning scenario: unlearn classes 0, 1, and 2
-classes="0 1 2"
-label="class_$(echo ${classes} | tr ' ' ',')"
+classes=(0 1 2)
+label="class_$(IFS=,; echo "${classes[*]}")"
 
 acc=$(python aggregation.py --strategy proportional --container "cifar10" --shards "${shards}" --dataset datasets/CIFAR-10/datasetfile --label "${label}")
 cat containers/cifar10/times/shard-*:"${label}".time > "containers/cifar10/times/times.tmp"
