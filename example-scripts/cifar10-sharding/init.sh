@@ -13,7 +13,7 @@ if [[ ! -d "containers/cifar10" ]] ; then
     echo 0 > "containers/cifar10/times/null.time"
 fi
 
-# python distribution.py --shards "${shards}" --distribution uniform --container "cifar10" --dataset datasets/CIFAR-10/datasetfile --label 0
+python distribution.py --shards "${shards}" --distribution uniform --container "cifar10" --dataset datasets/CIFAR-10/datasetfile --label 0
 
 # for j in 0; do
 #     python distribution.py --requests "${j}" --distribution uniform --container "cifar10" --dataset datasets/CIFAR-10/datasetfile --label "${j}"
