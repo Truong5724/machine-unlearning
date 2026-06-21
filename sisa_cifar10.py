@@ -11,19 +11,18 @@ from time import time
 import json
 from tqdm import tqdm
 import argparse
+import random
 import torchvision.transforms as transforms
 
-SEED = 1
-
-np.random.seed(SEED)
-
-torch.manual_seed(SEED)
-torch.cuda.manual_seed(SEED)
-torch.cuda.manual_seed_all(SEED)
-
-torch.use_deterministic_algorithms(True)
-torch.backends.cudnn.benchmark = False
-torch.backends.cudnn.deterministic = True
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.use_deterministic_algorithms(True)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -105,6 +104,7 @@ device = torch.device(
     "cuda:0" if torch.cuda.is_available() else "cpu"
 )  # pylint: disable=no-member
 
+set_seed(1)
 model = model_lib.Model(input_shape, nb_classes, dropout_rate=args.dropout_rate)
 model.to(device)
 
@@ -161,9 +161,14 @@ if args.train:
         )
 
         # If checkpoints exists, skip the slice.
-        if not os.path.exists(
+        if os.path.exists(
             "containers/{}/cache/{}.pt".format(args.container, slice_hash)
         ):
+            print("Recovery mode for shard {} on slice {}".format(args.shard, sl))
+
+        else:
+            set_seed((sl + 1) * 100)
+
             # Initialize state.
             elapsed_time = 0
             start_epoch = 0
@@ -416,7 +421,7 @@ if args.train:
                     ),
                 )
 
-        elif sl == args.slices - 1:
+        if sl == args.slices - 1:
             os.symlink(
                 "{}.pt".format(slice_hash),
                 "containers/{}/cache/shard-{}:{}.pt".format(
