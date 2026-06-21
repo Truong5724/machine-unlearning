@@ -93,6 +93,8 @@ device = torch.device(
     "cuda:0" if torch.cuda.is_available() else "cpu"
 )  # pylint: disable=no-member
 
+
+torch.manual_seed(1)
 model = model_lib.Model(input_shape, nb_classes, dropout_rate=args.dropout_rate)
 model.to(device)
 
