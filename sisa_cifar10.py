@@ -13,6 +13,18 @@ from tqdm import tqdm
 import argparse
 import torchvision.transforms as transforms
 
+SEED = 1
+
+np.random.seed(SEED)
+
+torch.manual_seed(SEED)
+torch.cuda.manual_seed(SEED)
+torch.cuda.manual_seed_all(SEED)
+
+torch.use_deterministic_algorithms(True)
+torch.backends.cudnn.benchmark = False
+torch.backends.cudnn.deterministic = True
+
 parser = argparse.ArgumentParser()
 parser.add_argument(
     "--model", default="purchase", help="Architecture to use, default purchase"
@@ -93,8 +105,6 @@ device = torch.device(
     "cuda:0" if torch.cuda.is_available() else "cpu"
 )  # pylint: disable=no-member
 
-
-torch.manual_seed(1)
 model = model_lib.Model(input_shape, nb_classes, dropout_rate=args.dropout_rate)
 model.to(device)
 
@@ -294,6 +304,8 @@ if args.train:
                         preds = torch.argmax(outputs, dim=1)
 
                         # Calculate validation loss for the epoch.
+                        loss = loss_fn(outputs, gpu_val_labels)
+
                         val_loss += loss.item()
                         val_batches += 1
 
