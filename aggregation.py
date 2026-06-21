@@ -2,6 +2,7 @@ import numpy as np
 import json
 import os
 import importlib
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
 import argparse
 
@@ -19,6 +20,15 @@ parser.add_argument(
 parser.add_argument(
     "--baseline", type=int, help="Use only the specified shard (lone shard baseline)"
 )
+
+parser.add_argument(
+    "--unlearn_shards",
+    nargs="*",
+    type=int,
+    default=[],
+    help="List of shard IDs to ignore during inference"
+)
+
 parser.add_argument("--label", default="latest", help="Label, default latest")
 args = parser.parse_args()
 
@@ -72,7 +82,28 @@ votes = np.argmax(
 _, labels = dataloader.load(np.arange(datasetfile["nb_test"]), category="test")
 
 # Compute and print accuracy.
-accuracy = (
-    np.where(votes == labels)[0].shape[0] / outputs.shape[1]
-)  # pylint: disable=unsubscriptable-object
-print(accuracy)
+output = np.stack((votes, labels), axis=1)
+
+# Filter data based on unlearn_shards.
+mask = np.isin(labels, args.unlearn_shards)
+
+unlearned_preds = votes[mask]
+unlearned_labels = labels[mask]
+
+retained_preds = votes[~mask]
+retained_labels = labels[~mask]
+
+# Accuracy for retained and unlearned data
+retained_acc = accuracy_score(retained_labels, retained_preds)
+unlearn_acc = (
+    accuracy_score(unlearned_labels, unlearned_preds)
+    if len(unlearned_labels) > 0
+    else -1
+)
+
+# Macro-averaged precision, recall, and f1-score for the retained data
+retained_precision_macro = precision_score(retained_labels, retained_preds, average="macro", zero_division=0)
+retained_recall_macro = recall_score(retained_labels, retained_preds, average="macro", zero_division=0)
+retained_f1_macro = f1_score(retained_labels, retained_preds, average="macro", zero_division=0)
+
+print(f"{retained_acc:.4f}, {unlearn_acc:.4f}, {retained_precision_macro:.4f}, {retained_recall_macro:.4f}, {retained_f1_macro:.4f}")
