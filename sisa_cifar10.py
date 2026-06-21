@@ -155,6 +155,8 @@ if args.train:
     loaded = False
 
     for sl in tqdm(range(args.slices)):
+        set_seed((sl + 1) * 100)
+        
         # Get slice hash using sharded lib.
         slice_hash = getShardHash(
             args.container, args.label, args.shard, until=(sl + 1) * slice_size
@@ -167,8 +169,6 @@ if args.train:
             print("Recovery mode for shard {} on slice {}".format(args.shard, sl))
 
         else:
-            set_seed((sl + 1) * 100)
-
             # Initialize state.
             elapsed_time = 0
             start_epoch = 0
