@@ -223,6 +223,21 @@ if args.train:
             # Mark model as loaded for next slices.
             loaded = True
 
+        elif sl > 0:
+            previous_slice_hash = getShardHash(
+                args.container, args.label, args.shard, until=sl * slice_size
+            )
+            
+            with open(
+                "containers/{}/times/{}.time".format(
+                    args.container, previous_slice_hash
+                ),
+                "r",
+            ) as f:
+                elapsed_time = float(f.read())
+
+            print(f"Loaded previous time: {elapsed_time}")
+
         # Init optimizer
         if args.optimizer == "adam":
             optimizer = Adam(model.parameters(), lr=args.learning_rate)
@@ -399,12 +414,21 @@ if args.train:
                 ),
             )
 
-            os.symlink(
-                "{}.time".format(slice_hash),
-                "containers/{}/times/shard-{}:{}.time".format(
-                    args.container, args.shard, args.label
-                ),
-            )
+            if not os.path.exists("containers/{}/times/{}.time".format(args.container, slice_hash)):
+                os.symlink(
+                    "null.time",
+                    "containers/{}/times/shard-{}:{}.time".format(
+                        args.container, args.shard, args.label
+                    ),
+                )
+
+            else:
+                os.symlink(
+                    "{}.time".format(slice_hash),
+                    "containers/{}/times/shard-{}:{}.time".format(
+                        args.container, args.shard, args.label
+                    ),
+                )
 
 if args.test:
     # Load model weights from shard checkpoint (last slice).
