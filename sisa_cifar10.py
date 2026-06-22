@@ -227,7 +227,7 @@ if args.train:
         if args.optimizer == "adam":
             optimizer = Adam(model.parameters(), lr=args.learning_rate)
         elif args.optimizer == "sgd":
-            optimizer = SGD(model.parameters(), lr=args.learning_rate, momentum=0.9, weight_decay=1e-4)
+            optimizer = SGD(model.parameters(), lr=args.learning_rate, momentum=0.9, weight_decay=1e-4, nesterov=True)
         else:
             raise "Unsupported optimizer"
 
@@ -371,37 +371,37 @@ if args.train:
                         )
                     )
 
-            # When training is complete, save slice.
-            torch.save(
-                model.state_dict(),
-                "containers/{}/cache/{}.pt".format(args.container, slice_hash),
-            )
-            with open(
-                "containers/{}/times/{}.time".format(args.container, slice_hash), "w"
-            ) as f:
-                f.write("{}\n".format(train_time + elapsed_time))
+        # When training is complete, save slice.
+        torch.save(
+            model.state_dict(),
+            "containers/{}/cache/{}.pt".format(args.container, slice_hash),
+        )
+        with open(
+            "containers/{}/times/{}.time".format(args.container, slice_hash), "w"
+        ) as f:
+            f.write("{}\n".format(train_time + elapsed_time))
 
-            # Remove previous checkpoint.
-            if os.path.exists(
+        # Remove previous checkpoint.
+        if os.path.exists(
+            "containers/{}/cache/{}_{}.pt".format(
+                args.container, slice_hash, epoch - args.chkpt_interval
+            )
+        ):
+            os.remove(
                 "containers/{}/cache/{}_{}.pt".format(
-                    args.container, slice_hash, args.epochs - args.chkpt_interval
+                    args.container, slice_hash, epoch - args.chkpt_interval
                 )
-            ):
-                os.remove(
-                    "containers/{}/cache/{}_{}.pt".format(
-                        args.container, slice_hash, args.epochs - args.chkpt_interval
-                    )
-                )
-            if os.path.exists(
+            )
+        if os.path.exists(
+            "containers/{}/times/{}_{}.time".format(
+                args.container, slice_hash, epoch - args.chkpt_interval
+            )
+        ):
+            os.remove(
                 "containers/{}/times/{}_{}.time".format(
-                    args.container, slice_hash, args.epochs - args.chkpt_interval
+                    args.container, slice_hash, epoch - args.chkpt_interval
                 )
-            ):
-                os.remove(
-                    "containers/{}/times/{}_{}.time".format(
-                        args.container, slice_hash, args.epochs - args.chkpt_interval
-                    )
-                )
+            )
 
         # If this is the last slice, create a symlink attached to it.
         if sl == args.slices - 1:
