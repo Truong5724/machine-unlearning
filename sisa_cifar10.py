@@ -382,26 +382,13 @@ if args.train:
             f.write("{}\n".format(train_time + elapsed_time))
 
         # Remove previous checkpoint.
-        if os.path.exists(
-            "containers/{}/cache/{}_{}.pt".format(
-                args.container, slice_hash, epoch - args.chkpt_interval
-            )
-        ):
-            os.remove(
-                "containers/{}/cache/{}_{}.pt".format(
-                    args.container, slice_hash, epoch - args.chkpt_interval
-                )
-            )
-        if os.path.exists(
-            "containers/{}/times/{}_{}.time".format(
-                args.container, slice_hash, epoch - args.chkpt_interval
-            )
-        ):
-            os.remove(
-                "containers/{}/times/{}_{}.time".format(
-                    args.container, slice_hash, epoch - args.chkpt_interval
-                )
-            )
+        last_checkpoint_pt = glob("containers/{}/cache/{}_*.pt".format(args.container, slice_hash))
+        if last_checkpoint_pt:
+            os.remove(last_checkpoint_pt[0])
+
+        last_checkpoint_time = glob("containers/{}/times/{}_*.time".format(args.container, slice_hash))
+        if last_checkpoint_time:
+            os.remove(last_checkpoint_time[0])
 
         # If this is the last slice, create a symlink attached to it.
         if sl == args.slices - 1:
@@ -411,18 +398,13 @@ if args.train:
                     args.container, args.shard, args.label
                 ),
             )
-            if not os.path.exists(
+
+            os.symlink(
+                "{}.time".format(slice_hash),
                 "containers/{}/times/shard-{}:{}.time".format(
                     args.container, args.shard, args.label
-                )
-            ):
-                os.symlink(
-                    "null.time",
-                    "containers/{}/times/shard-{}:{}.time".format(
-                        args.container, args.shard, args.label
-                    ),
-                )
-
+                ),
+            )
 
 if args.test:
     # Load model weights from shard checkpoint (last slice).
