@@ -2,7 +2,9 @@ import numpy as np
 import json
 import os
 import importlib
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 import argparse
 
@@ -81,8 +83,20 @@ votes = np.argmax(
 # Load labels.
 _, labels = dataloader.load(np.arange(datasetfile["nb_test"]), category="test")
 
-# Compute and print accuracy.
-output = np.stack((votes, labels), axis=1)
+# Confusion matrix
+cm = confusion_matrix(labels, votes)
+
+plt.figure()
+
+sns.heatmap(cm, annot=True, fmt="d")
+
+# plt.title("Confusion Matrix")
+plt.xlabel("Nhãn dự đoán")
+plt.ylabel("Nhãn thật")
+
+plt.tight_layout()
+    
+plt.savefig(f"containers/{args.container}/output/cm_unlearned_{args.label}.png")
 
 # Filter data based on unlearn_shards.
 mask = np.isin(labels, args.unlearn_shards)
