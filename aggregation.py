@@ -90,13 +90,13 @@ plt.figure()
 
 sns.heatmap(cm, annot=True, fmt="d")
 
-# plt.title("Confusion Matrix")
+plt.title("Ma trận nhầm lẫn")
 plt.xlabel("Nhãn dự đoán")
 plt.ylabel("Nhãn thật")
 
 plt.tight_layout()
     
-plt.savefig(f"containers/{args.container}/output/cm_unlearned_{args.label}.png")
+plt.savefig(f"containers/{args.container}/outputs/cm_unlearned_{args.label}.png")
 
 # Filter data based on unlearn_shards.
 mask = np.isin(labels, args.unlearn_shards)
