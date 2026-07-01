@@ -2,7 +2,7 @@ import numpy as np
 import json
 import os
 import importlib
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -109,6 +109,7 @@ retained_labels = labels[~mask]
 
 # Accuracy for retained and unlearned data
 retained_acc = accuracy_score(retained_labels, retained_preds)
+retained_bacc = balanced_accuracy_score(retained_labels, retained_preds)
 unlearn_acc = (
     accuracy_score(unlearned_labels, unlearned_preds)
     if len(unlearned_labels) > 0
@@ -120,4 +121,7 @@ retained_precision_macro = precision_score(retained_labels, retained_preds, aver
 retained_recall_macro = recall_score(retained_labels, retained_preds, average="macro", zero_division=0)
 retained_f1_macro = f1_score(retained_labels, retained_preds, average="macro", zero_division=0)
 
-print(f"{retained_acc:.4f}, {unlearn_acc:.4f}, {retained_precision_macro:.4f}, {retained_recall_macro:.4f}, {retained_f1_macro:.4f}")
+print(
+    f"{retained_acc:.4f}, {retained_bacc:.4f}, {retained_precision_macro:.4f}, {retained_f1_macro:.4f}, "
+    f"{unlearn_acc:.4f}"
+)

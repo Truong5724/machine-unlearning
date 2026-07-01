@@ -13,7 +13,9 @@ import numpy as np
 import torch
 import json
 import argparse
+import os
 from importlib import import_module
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, precision_score, f1_score
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--container', default='utkface', help='Container name')
@@ -162,3 +164,47 @@ else:
     print("❌ No results - check if models are trained")
 
 print("=" * 70)
+
+# Optional aggregate 4-metric summary on the full forgot set.
+if len(all_forgot_indices) > 0:
+    all_preds = []
+    all_true = []
+    for shard_idx in range(args.shards):
+        checkpoint = f"containers/{args.container}/cache/shard-{shard_idx}:{args.label}.pt"
+        if not os.path.exists(checkpoint):
+            continue
+
+        try:
+            model = model_lib.Model(input_shape, nb_classes, dropout_rate=0.4)
+            model.load_state_dict(torch.load(checkpoint, map_location=device))
+            model.to(device)
+            model.eval()
+        except FileNotFoundError:
+            continue
+
+        forgot_in_shard = requestfile[shard_idx]
+        if len(forgot_in_shard) == 0:
+            continue
+
+        X_forgot, y_forgot = dataloader.load(forgot_in_shard, category='train')
+        with torch.no_grad():
+            for i in range(0, len(X_forgot), args.batch_size):
+                batch_X = X_forgot[i:i+args.batch_size]
+                batch_y = y_forgot[i:i+args.batch_size]
+                gpu_X = torch.from_numpy(batch_X).to(device)
+                logits = model(gpu_X)
+                preds = torch.argmax(logits, dim=1).cpu().numpy()
+                all_preds.extend(preds.tolist())
+                all_true.extend(batch_y.tolist())
+
+    if len(all_true) > 0:
+        all_true = np.asarray(all_true, dtype=np.int64)
+        all_preds = np.asarray(all_preds, dtype=np.int64)
+        forgot_acc = accuracy_score(all_true, all_preds)
+        forgot_bacc = balanced_accuracy_score(all_true, all_preds)
+        forgot_precision = precision_score(all_true, all_preds, average='macro', zero_division=0)
+        forgot_f1 = f1_score(all_true, all_preds, average='macro', zero_division=0)
+        print(
+            f"Forgot-set metrics: acc={forgot_acc:.4f}, bacc={forgot_bacc:.4f}, "
+            f"precision={forgot_precision:.4f}, f1={forgot_f1:.4f}"
+        )

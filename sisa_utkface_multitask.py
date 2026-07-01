@@ -79,6 +79,40 @@ def iter_batches(indices, batch_size, shuffle=True):
         yield indices[i : i + batch_size]
 
 
+def compute_multiclass_metrics(y_true, y_pred, num_classes):
+    y_true = np.asarray(y_true, dtype=np.int64)
+    y_pred = np.asarray(y_pred, dtype=np.int64)
+
+    acc = float(np.mean(y_true == y_pred)) if y_true.size else 0.0
+
+    precisions = []
+    recalls = []
+    f1s = []
+    for cls in range(num_classes):
+        tp = float(np.sum((y_true == cls) & (y_pred == cls)))
+        fp = float(np.sum((y_true != cls) & (y_pred == cls)))
+        fn = float(np.sum((y_true == cls) & (y_pred != cls)))
+
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = 2.0 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+
+        precisions.append(precision)
+        recalls.append(recall)
+        f1s.append(f1)
+
+    precision_macro = float(np.mean(precisions)) if precisions else 0.0
+    recall_macro = float(np.mean(recalls)) if recalls else 0.0
+    f1_macro = float(np.mean(f1s)) if f1s else 0.0
+
+    return {
+        "acc": acc,
+        "precision": precision_macro,
+        "bacc": recall_macro,
+        "f1": f1_macro,
+    }
+
+
 def make_class_weight(labels, num_classes, device):
     """
     Inverse-frequency weights, normalized so mean=1.
@@ -257,6 +291,7 @@ def test(args):
 
     outputs = np.empty((0, nb_classes))
     test_indices = np.arange(datasetfile["nb_test"])
+    _, test_labels = dataloader.load_multitask(test_indices, category="test")
 
     for batch_ids in iter_batches(test_indices, args.batch_size, shuffle=False):
         images, _ = dataloader.load_multitask(batch_ids, category="test")
@@ -276,6 +311,18 @@ def test(args):
         f"containers/{args.container}/outputs/shard-{args.shard}:{args.label}.npy",
         outputs,
     )
+
+    y_true = np.asarray(test_labels[task], dtype=np.int64)
+    y_pred = np.argmax(outputs, axis=1).astype(np.int64)
+    metrics = compute_multiclass_metrics(y_true, y_pred, nb_classes)
+
+    print("=" * 70)
+    print(f"Shard {args.shard} ({task}) metrics")
+    print("=" * 70)
+    print(f"acc     : {metrics['acc'] * 100:.2f}%")
+    print(f"prec    : {metrics['precision'] * 100:.2f}%")
+    print(f"bacc    : {metrics['bacc'] * 100:.2f}%")
+    print(f"f1      : {metrics['f1'] * 100:.2f}%")
 
 
 def main():
