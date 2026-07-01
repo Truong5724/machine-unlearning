@@ -10,7 +10,7 @@ shards=$1
 # ⚙️ Cấu hình train
 # ===============================
 BATCH_SIZE=64
-EPOCHS=60
+EPOCHS=30
 LEARNING_RATE=0.001
 OPTIMIZER=adam
 CHKPT_INTERVAL=5

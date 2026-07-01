@@ -40,7 +40,7 @@ class MultiTaskModel(nn.Module):
         )
 
         self.head_gender = nn.Linear(128, 2)
-        self.head_age = nn.Linear(128, 5)
+        self.head_age = nn.Linear(128, 3)
         self.head_race = nn.Linear(128, 5)
 
     def _encode(self, x):
