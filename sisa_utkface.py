@@ -135,9 +135,8 @@ if args.train:
             # Initialize state.
             elapsed_time = 0
             start_epoch = 0
-            slice_epochs = int((sl + 1) * avg_epochs_per_slice) - int(
-                sl * avg_epochs_per_slice
-            )
+            slice_epochs = args.epochs
+            print(f"Slice {sl}: {slice_epochs} epochs")
 
             # If weights are already in memory (from previous slice), skip loading.
             if not loaded:
@@ -190,6 +189,7 @@ if args.train:
             # Actual training.
             train_time = 0.0
 
+
             for epoch in tqdm(range(start_epoch, slice_epochs)):
                 epoch_start_time = time()
 
@@ -205,14 +205,9 @@ if args.train:
                     args.dataset,
                     until=(sl + 1) * slice_size if sl < args.slices - 1 else None,
                 ):
-                    # Convert data to torch format and send to selected device.
-                    # CelebA/UTKFace: images already normalized in dataloader
                     gpu_images = torch.from_numpy(images).to(device)
                     gpu_labels = torch.from_numpy(labels).to(device)
 
-                    forward_start_time = time()
-
-                    # Perform basic training step.
                     logits = model(gpu_images)
                     loss = loss_fn(logits, gpu_labels)
 
@@ -220,13 +215,12 @@ if args.train:
                     loss.backward()
                     optimizer.step()
 
-                    train_time += time() - forward_start_time
-
-                    # Real-time displaying
                     running_loss += loss.item()
                     preds = torch.argmax(logits, dim=1)
                     correct += (preds == gpu_labels).sum().item()
                     total += gpu_labels.size(0)
+
+                train_time += time() - epoch_start_time
 
                 train_acc = 100 * correct / total
                 print(f" [Epoch {epoch+1}] - Loss: {running_loss:.4f} - Acc: {train_acc:.2f}%")

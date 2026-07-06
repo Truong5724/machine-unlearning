@@ -14,6 +14,7 @@ import torch
 import json
 import argparse
 import os
+import sys
 from importlib import import_module
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, precision_score, f1_score
 
@@ -33,9 +34,15 @@ with open(args.dataset) as f:
 input_shape = tuple(datasetfile["input_shape"])
 nb_classes = datasetfile["nb_classes"]
 
+# Ensure repo root and dataset directory are importable regardless of cwd.
+script_dir = os.path.dirname(os.path.abspath(__file__))
+repo_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
+dataset_dir = os.path.dirname(os.path.abspath(args.dataset))
+sys.path.insert(0, repo_root)
+sys.path.insert(0, dataset_dir)
+
 # Load dataloader
-module_path = '.'.join(args.dataset.split('/')[:-1] + [datasetfile['dataloader']])
-dataloader = import_module(module_path)
+dataloader = import_module(datasetfile['dataloader'])
 
 # Load model architecture
 model_lib = import_module(f"architectures.{args.model}")
