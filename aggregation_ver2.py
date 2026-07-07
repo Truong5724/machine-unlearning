@@ -5,7 +5,8 @@ import os
 
 import numpy as np
 
-TASK_BY_SHARD = {0: "gender", 1: "age", 2: "race"}
+TASKS = ("gender", "age", "race")
+NUM_CLASSES = {"gender": 2, "age": 3, "race": 5}
 
 
 def load_dataloader(dataset_path):
@@ -19,11 +20,6 @@ def load_dataloader(dataset_path):
     return datasetfile, dataloader
 
 
-def compute_acc(output_matrix, labels):
-    preds = np.argmax(output_matrix, axis=1)
-    return float(np.mean(preds == labels))
-
-
 def compute_multiclass_metrics(output_matrix, labels):
     preds = np.argmax(output_matrix, axis=1)
     labels = np.asarray(labels, dtype=np.int64)
@@ -31,9 +27,7 @@ def compute_multiclass_metrics(output_matrix, labels):
     acc = float(np.mean(preds == labels)) if labels.size else 0.0
 
     num_classes = int(output_matrix.shape[1]) if output_matrix.ndim == 2 else 0
-    precisions = []
-    recalls = []
-    f1s = []
+    precisions, recalls, f1s = [], [], []
 
     for cls in range(num_classes):
         tp = float(np.sum((preds == cls) & (labels == cls)))
@@ -48,16 +42,37 @@ def compute_multiclass_metrics(output_matrix, labels):
         recalls.append(recall)
         f1s.append(f1)
 
-    precision_macro = float(np.mean(precisions)) if precisions else 0.0
-    bacc = float(np.mean(recalls)) if recalls else 0.0
-    f1_macro = float(np.mean(f1s)) if f1s else 0.0
-
     return {
         "acc": acc,
-        "precision": precision_macro,
-        "bacc": bacc,
-        "f1": f1_macro,
+        "precision": float(np.mean(precisions)) if precisions else 0.0,
+        "bacc": float(np.mean(recalls)) if recalls else 0.0,
+        "f1": float(np.mean(f1s)) if f1s else 0.0,
     }
+
+
+def aggregate_task_outputs(container, label, task, shards, strategy="uniform"):
+    outputs = []
+    for shard in range(shards):
+        output_path = f"containers/{container}/outputs/shard-{shard}:{label}-{task}.npy"
+        if not os.path.exists(output_path):
+            raise FileNotFoundError(f"Missing output: {output_path}")
+        outputs.append(np.load(output_path, allow_pickle=True))
+
+    outputs = np.array(outputs)
+
+    if strategy == "uniform":
+        weights = np.ones(outputs.shape[0]) / outputs.shape[0]
+    elif strategy == "proportional":
+        split = np.load(f"containers/{container}/splitfile.npy", allow_pickle=True)
+        shard_sizes = np.array([len(s) for s in split], dtype=float)
+        weights = shard_sizes / shard_sizes.sum()
+    else:
+        raise ValueError(f"Unsupported strategy: {strategy}")
+
+    votes = np.argmax(
+        np.tensordot(weights.reshape(1, -1), outputs, axes=1), axis=2
+    ).reshape(outputs.shape[1])
+    return votes
 
 
 def main():
@@ -65,6 +80,8 @@ def main():
     parser.add_argument("--container", default="utkface")
     parser.add_argument("--label", required=True)
     parser.add_argument("--dataset", default="datasets/UTKFace/datasetfile_ver2")
+    parser.add_argument("--shards", type=int, default=3)
+    parser.add_argument("--strategy", default="uniform", choices=["uniform", "proportional"])
     args = parser.parse_args()
 
     datasetfile, dataloader = load_dataloader(args.dataset)
@@ -72,26 +89,27 @@ def main():
     _, labels = dataloader.load_multitask(test_indices, category="test")
 
     print("=" * 70)
-    print("UTKFACE MULTITASK EVALUATION")
+    print("UTKFACE JOINT MULTITASK EVALUATION (TEST SET)")
     print("=" * 70)
     print(f"Container: {args.container}")
     print(f"Label: {args.label}")
-    print(f"Dataset: {args.dataset}")
+    print(f"Shards: {args.shards}")
+    print(f"Strategy: {args.strategy}")
     print()
 
     all_metrics = {}
-    for shard, task in TASK_BY_SHARD.items():
-        output_path = f"containers/{args.container}/outputs/shard-{shard}:{args.label}.npy"
-        if not os.path.exists(output_path):
-            raise FileNotFoundError(f"Missing output: {output_path}")
-
-        outputs = np.load(output_path, allow_pickle=True)
+    for task in TASKS:
+        preds = aggregate_task_outputs(
+            args.container, args.label, task, args.shards, strategy=args.strategy
+        )
         task_labels = np.asarray(labels[task], dtype=np.int64)
-        metrics = compute_multiclass_metrics(outputs, task_labels)
+        metrics = compute_multiclass_metrics(
+            np.eye(NUM_CLASSES[task])[preds], task_labels
+        )
         all_metrics[task] = metrics
 
         print(
-            f"Shard {shard} ({task}) acc={metrics['acc'] * 100:.2f}% "
+            f"{task:6s}: acc={metrics['acc'] * 100:.2f}% "
             f"prec={metrics['precision'] * 100:.2f}% "
             f"bacc={metrics['bacc'] * 100:.2f}% "
             f"f1={metrics['f1'] * 100:.2f}%"
@@ -108,7 +126,7 @@ def main():
     print(f"Mean multitask f1     : {mean_f1 * 100:.2f}%")
 
     times = []
-    for shard in TASK_BY_SHARD:
+    for shard in range(args.shards):
         time_path = f"containers/{args.container}/times/shard-{shard}:{args.label}.time"
         if os.path.exists(time_path):
             with open(time_path, "r") as f:

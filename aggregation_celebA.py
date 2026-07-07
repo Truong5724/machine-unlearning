@@ -430,8 +430,14 @@ def main():
         y_score = predict_task(model, task, x, batch_size=args.batch_size)
 
         thr = float(args.threshold)
+
         if args.thresholds_file:
-            thr = load_threshold_for_task(args.thresholds_file, task)
+            try:
+                thr = load_threshold_for_task(args.thresholds_file, task)
+            except (FileNotFoundError, KeyError):
+                print(f"⚠️  Missing threshold for task '{task}', skip.")
+                missing.append(task)
+                continue
         if args.tune_thresholds:
             y_tune = np.asarray(y_tune_dict[task], dtype=np.int64)
             y_score_tune = predict_task(model, task, x_tune, batch_size=args.batch_size)
@@ -460,6 +466,7 @@ def main():
     macro_f1 = float(np.mean([metrics_by_task[t]["f1"] for t in available]))
     macro_roc_auc = float(np.mean([metrics_by_task[t]["roc_auc"] for t in available]))
     macro_pr_auc = float(np.mean([metrics_by_task[t]["pr_auc"] for t in available]))
+    macro_recall = float(np.mean([metrics_by_task[t]["recall"] for t in available]))
 
     print("=" * 72)
     print("CELEBA OVR AGGREGATION")
@@ -496,6 +503,7 @@ def main():
     print(f"Macro-F1  : {macro_f1:.4f}")
     print(f"Macro-ROC-AUC : {macro_roc_auc:.4f}")
     print(f"Macro-PR-AUC  : {macro_pr_auc:.4f}")
+    print(f"Macro-RECALL  : {macro_recall:.4f}")
     print("=" * 72)
 
     report = {

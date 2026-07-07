@@ -30,7 +30,7 @@ echo "Split       : ${split}"
 echo "Thresholds  : ${thresholds_file}"
 echo "Include     : ${include_tasks:-<all>}"
 echo "Exclude     : ${exclude_tasks:-<none>}"
-echo "Metrics     : Macro-ACC, Macro-F1, Macro-ROC-AUC, Macro-PR-AUC"
+echo "Metrics     : Mean head accuracy, Weighted mean acc, Mean head bal. acc, Mean head F1, Mean head PR-AUC"
 if [[ -n "${save_json}" ]]; then
   echo "Save JSON   : ${save_json}"
 fi
