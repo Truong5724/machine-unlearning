@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import sys
 
 import numpy as np
 
@@ -59,7 +60,9 @@ if args.shards is not None:
         np.save(f"containers/{args.container}/splitfile.npy", partition)
         requests = ensure_object_array([np.array([], dtype=np.int64) for _ in range(args.shards)])
         np.save(f"containers/{args.container}/requestfile:{args.label}.npy", requests)
+        print(f"✅ Created {args.shards} uniform shards")
     else:
+        # Phần non-uniform (PLS-GAP) giữ nguyên logic phức tạp của bạn
         def mass(index):
             if args.distribution.split(":")[0] == "exponential":
                 lbd = (
@@ -75,6 +78,7 @@ if args.shards is not None:
                     else 1.16
                 )
                 return a / ((index + 1) ** (a + 1))
+            return 1.0
 
         weights = mass(np.arange(0, datasetfile["nb_train"]))
         indices = np.argsort(weights)
@@ -84,7 +88,7 @@ if args.shards is not None:
         bottom_queue = queue.shape[0]
         lim = (
             int(float(args.algo.split(":")[1]) * datasetfile["nb_train"])
-            if len(args.algo.split(":")) > 1
+            if args.algo and len(args.algo.split(":")) > 1
             else int(0.01 * datasetfile["nb_train"])
         )
 
@@ -120,6 +124,7 @@ if args.shards is not None:
         requests = ensure_object_array([np.array([], dtype=np.int64) for _ in range(len(partition))])
         np.save(f"containers/{args.container}/requestfile:{args.label}.npy", requests)
 
+
 if args.requests is not None:
     if args.distribution == "reset":
         partition = np.load(f"containers/{args.container}/splitfile.npy", allow_pickle=True)
@@ -130,13 +135,12 @@ if args.requests is not None:
 
         if args.unlearn_class is not None:
             dataset_dir = os.path.dirname(args.dataset)
-            import sys
-
             sys.path.insert(0, dataset_dir)
-            dataloader = __import__(datasetfile["dataloader"])
+            dataloader_module = __import__(datasetfile["dataloader"])
 
             all_indices = np.arange(0, datasetfile["nb_train"])
-            _, y_train = dataloader.load(all_indices, category="train")
+            # Giả sử dataloader có hàm load trả về (X, y) với y là class chính
+            _, y_train = dataloader_module.load(all_indices, category="train")
 
             all_requests = np.array([], dtype=int)
             for class_label in args.unlearn_class:
@@ -144,6 +148,7 @@ if args.requests is not None:
                 all_requests = np.concatenate((all_requests, class_indices))
 
             all_requests = np.unique(all_requests)
+            print(f"✅ Unlearning {len(all_requests)} samples from classes {args.unlearn_class}")
         else:
             np.random.seed(1)
             if args.distribution.split(":")[0] == "exponential":
@@ -152,14 +157,14 @@ if args.requests is not None:
                     if len(args.distribution.split(":")) > 1
                     else -np.log(0.05) / datasetfile["nb_train"]
                 )
-                all_requests = np.random.exponential(1 / lbd, (args.requests,))
+                all_requests = np.random.exponential(1 / lbd, args.requests).astype(int)
             elif args.distribution.split(":")[0] == "pareto":
                 a = (
                     float(args.distribution.split(":")[1])
                     if len(args.distribution.split(":")) > 1
                     else 1.16
                 )
-                all_requests = np.random.pareto(a, (args.requests,))
+                all_requests = np.random.pareto(a, args.requests).astype(int)
             else:
                 all_requests = np.random.randint(0, datasetfile["nb_train"], args.requests)
 
@@ -171,3 +176,5 @@ if args.requests is not None:
             f"containers/{args.container}/requestfile:{args.label}.npy",
             np.array(requests, dtype=object),
         )
+        print(f"✅ Created requestfile:{args.label} with {args.requests} requests")
+

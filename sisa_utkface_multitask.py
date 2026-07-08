@@ -11,10 +11,8 @@ from torch.nn import CrossEntropyLoss
 from torch.optim import Adam, SGD
 from torch.nn.functional import one_hot, softmax
 from sharded import getShardHash, sizeOfShard
-from tqdm import tqdm
 
 from architectures.utkface_multitask import MultiTaskModel
-
 
 TASKS = ("gender", "age", "race")
 NUM_CLASSES = {"gender": 2, "age": 3, "race": 5}
@@ -99,7 +97,7 @@ def make_class_weight(labels, num_classes, device):
 def multitask_loss(outputs, labels, loss_fns):
     total = 0.0
     for task in TASKS:
-        y = torch.from_numpy(labels[task]).to(outputs[task].device)
+        y = torch.from_numpy(labels[task]).to(outputs[task].device).long()
         total = total + loss_fns[task](outputs[task], y)
     return total
 
@@ -203,7 +201,7 @@ def train(args):
                 batch_size = x.shape[0]
                 total += batch_size
                 for task in TASKS:
-                    y = torch.from_numpy(labels[task]).to(device)
+                    y = torch.from_numpy(labels[task]).to(device).long()
                     preds = torch.argmax(outputs[task], dim=1)
                     task_correct[task] += (preds == y).sum().item()
 
@@ -274,10 +272,10 @@ def test(args):
 
         for task in TASKS:
             if args.output_type == "softmax":
-                preds = softmax(logits[task], dim=1).to("cpu").numpy()
+                preds = softmax(logits[task], dim=1).cpu().numpy()
             else:
                 argmax_preds = torch.argmax(logits[task], dim=1)
-                preds = one_hot(argmax_preds, NUM_CLASSES[task]).to("cpu").numpy()
+                preds = one_hot(argmax_preds, NUM_CLASSES[task]).cpu().numpy()
             outputs_by_task[task] = np.concatenate((outputs_by_task[task], preds))
 
     os.makedirs(f"containers/{args.container}/outputs", exist_ok=True)

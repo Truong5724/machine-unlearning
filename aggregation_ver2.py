@@ -51,27 +51,28 @@ def compute_multiclass_metrics(output_matrix, labels):
 
 
 def aggregate_task_outputs(container, label, task, shards, strategy="uniform"):
+    """Simple majority vote như SISA gốc"""
     outputs = []
     for shard in range(shards):
         output_path = f"containers/{container}/outputs/shard-{shard}:{label}-{task}.npy"
         if not os.path.exists(output_path):
-            raise FileNotFoundError(f"Missing output: {output_path}")
-        outputs.append(np.load(output_path, allow_pickle=True))
+            raise FileNotFoundError(f"Missing output for shard {shard}: {output_path}")
+        outputs.append(np.load(output_path))
 
-    outputs = np.array(outputs)
+    outputs = np.array(outputs)  # shape: (n_shards, n_samples, n_classes)
 
     if strategy == "uniform":
-        weights = np.ones(outputs.shape[0]) / outputs.shape[0]
+        # Majority vote đơn giản
+        votes = np.argmax(np.sum(outputs, axis=0), axis=1)
     elif strategy == "proportional":
         split = np.load(f"containers/{container}/splitfile.npy", allow_pickle=True)
         shard_sizes = np.array([len(s) for s in split], dtype=float)
         weights = shard_sizes / shard_sizes.sum()
+        weighted = np.tensordot(weights.reshape(-1, 1, 1), outputs, axes=(0, 0))
+        votes = np.argmax(weighted.squeeze(0), axis=1)
     else:
         raise ValueError(f"Unsupported strategy: {strategy}")
 
-    votes = np.argmax(
-        np.tensordot(weights.reshape(1, -1), outputs, axes=1), axis=2
-    ).reshape(outputs.shape[1])
     return votes
 
 
@@ -89,13 +90,13 @@ def main():
     _, labels = dataloader.load_multitask(test_indices, category="test")
 
     print("=" * 70)
-    print("UTKFACE JOINT MULTITASK EVALUATION (TEST SET)")
+    print("UTKFACE MULTITASK EVALUATION (TEST SET - SISA)")
     print("=" * 70)
-    print(f"Container: {args.container}")
-    print(f"Label: {args.label}")
-    print(f"Shards: {args.shards}")
-    print(f"Strategy: {args.strategy}")
-    print()
+    print(f"Container : {args.container}")
+    print(f"Label     : {args.label}")
+    print(f"Shards    : {args.shards}")
+    print(f"Strategy  : {args.strategy} (majority vote)")
+    print("-" * 70)
 
     all_metrics = {}
     for task in TASKS:
@@ -104,27 +105,31 @@ def main():
         )
         task_labels = np.asarray(labels[task], dtype=np.int64)
         metrics = compute_multiclass_metrics(
-            np.eye(NUM_CLASSES[task])[preds], task_labels
+            np.eye(NUM_CLASSES[task])[preds], task_labels   # one-hot cho hàm metrics
         )
         all_metrics[task] = metrics
 
         print(
-            f"{task:6s}: acc={metrics['acc'] * 100:.2f}% "
-            f"prec={metrics['precision'] * 100:.2f}% "
-            f"bacc={metrics['bacc'] * 100:.2f}% "
-            f"f1={metrics['f1'] * 100:.2f}%"
+            f"{task:6s}: acc={metrics['acc']*100:6.2f}% | "
+            f"prec={metrics['precision']*100:6.2f}% | "
+            f"bacc={metrics['bacc']*100:6.2f}% | "
+            f"f1={metrics['f1']*100:6.2f}%"
         )
 
-    mean_acc = float(np.mean([m["acc"] for m in all_metrics.values()]))
-    mean_precision = float(np.mean([m["precision"] for m in all_metrics.values()]))
-    mean_bacc = float(np.mean([m["bacc"] for m in all_metrics.values()]))
-    mean_f1 = float(np.mean([m["f1"] for m in all_metrics.values()]))
-    print()
-    print(f"Mean multitask acc    : {mean_acc * 100:.2f}%")
-    print(f"Mean multitask prec   : {mean_precision * 100:.2f}%")
-    print(f"Mean multitask bacc   : {mean_bacc * 100:.2f}%")
-    print(f"Mean multitask f1     : {mean_f1 * 100:.2f}%")
+    # Mean metrics
+    mean_acc = np.mean([m["acc"] for m in all_metrics.values()])
+    mean_prec = np.mean([m["precision"] for m in all_metrics.values()])
+    mean_bacc = np.mean([m["bacc"] for m in all_metrics.values()])
+    mean_f1 = np.mean([m["f1"] for m in all_metrics.values()])
 
+    print("-" * 70)
+    print(f"Mean Acc : {mean_acc*100:6.2f}%")
+    print(f"Mean Prec: {mean_prec*100:6.2f}%")
+    print(f"Mean BAcc: {mean_bacc*100:6.2f}%")
+    print(f"Mean F1  : {mean_f1*100:6.2f}%")
+    print("=" * 70)
+
+    # Training time summary
     times = []
     for shard in range(args.shards):
         time_path = f"containers/{args.container}/times/shard-{shard}:{args.label}.time"
@@ -132,13 +137,10 @@ def main():
             with open(time_path, "r") as f:
                 try:
                     times.append(float(f.read().strip()))
-                except ValueError:
+                except:
                     pass
-
     if times:
-        print(f"Total training time (sum shards): {np.sum(times):.2f}s")
-
-    print("=" * 70)
+        print(f"Total training time: {np.sum(times)/60:.1f} minutes")
 
 
 if __name__ == "__main__":
