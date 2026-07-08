@@ -520,6 +520,7 @@ def main():
         "selected_tasks": eval_tasks,
         "available_tasks": available,
         "missing_tasks": missing,
+        "recall_macro": macro_recall,
         "macro_acc": macro_acc,
         "macro_f1": macro_f1,
         "macro_roc_auc": macro_roc_auc,
