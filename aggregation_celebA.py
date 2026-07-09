@@ -82,15 +82,41 @@ def binary_metrics(y_true, y_score, threshold=0.5):
     tp, tn, fp, fn = binary_confusion(y_true, y_pred)
 
     acc = safe_div(tp + tn, tp + tn + fp + fn)
-    tpr = safe_div(tp, tp + fn)
-    tnr = safe_div(tn, tn + fp)
-    bacc = 0.5 * (tpr + tnr)
-    precision = safe_div(tp, tp + fp)
-    recall = tpr
-    if precision + recall == 0:
-        f1 = 0.0
+
+    # ---------- Positive class ----------
+    precision_pos = safe_div(tp, tp + fp)
+    recall_pos = safe_div(tp, tp + fn)
+
+    if precision_pos + recall_pos == 0:
+        f1_pos = 0.0
     else:
-        f1 = 2.0 * precision * recall / (precision + recall)
+        f1_pos = (
+            2.0
+            * precision_pos
+            * recall_pos
+            / (precision_pos + recall_pos)
+        )
+
+    # ---------- Negative class ----------
+    precision_neg = safe_div(tn, tn + fn)
+    recall_neg = safe_div(tn, tn + fp)
+
+    if precision_neg + recall_neg == 0:
+        f1_neg = 0.0
+    else:
+        f1_neg = (
+            2.0
+            * precision_neg
+            * recall_neg
+            / (precision_neg + recall_neg)
+        )
+
+    # ---------- Macro metrics ----------
+    precision = (precision_pos + precision_neg) / 2.0
+    recall = (recall_pos + recall_neg) / 2.0
+    f1 = (f1_pos + f1_neg) / 2.0
+
+    bacc = recall
 
     roc_auc = roc_auc_score_binary(y_true, y_score)
     pr_auc = average_precision_score(y_true, y_score)
@@ -98,11 +124,22 @@ def binary_metrics(y_true, y_score, threshold=0.5):
     return {
         "acc": acc,
         "bacc": bacc,
-        "f1": f1,
+
         "precision": precision,
         "recall": recall,
+        "f1": f1,
+
+        "precision_pos": precision_pos,
+        "recall_pos": recall_pos,
+        "f1_pos": f1_pos,
+
+        "precision_neg": precision_neg,
+        "recall_neg": recall_neg,
+        "f1_neg": f1_neg,
+
         "roc_auc": roc_auc,
         "pr_auc": pr_auc,
+
         "tp": tp,
         "tn": tn,
         "fp": fp,
@@ -157,32 +194,61 @@ def tune_threshold(y_true, y_score, objective="f1", min_threshold=0.0, max_thres
     fn = total_pos - tp
     tn = total_neg - fp
 
-    precision = np.divide(
+    # ---------- Positive class ----------
+
+    precision_pos = np.divide(
         tp,
         tp + fp,
         out=np.zeros_like(tp, dtype=np.float64),
         where=(tp + fp) != 0,
     )
-    recall = np.divide(
+
+    recall_pos = np.divide(
         tp,
         tp + fn,
         out=np.zeros_like(tp, dtype=np.float64),
         where=(tp + fn) != 0,
     )
-    tnr = np.divide(
+
+    f1_pos = np.divide(
+        2.0 * precision_pos * recall_pos,
+        precision_pos + recall_pos,
+        out=np.zeros_like(precision_pos, dtype=np.float64),
+        where=(precision_pos + recall_pos) != 0,
+    )
+
+# ---------- Negative class ----------
+
+    precision_neg = np.divide(
+        tn,
+        tn + fn,
+        out=np.zeros_like(tn, dtype=np.float64),
+        where=(tn + fn) != 0,
+    )
+
+    recall_neg = np.divide(
         tn,
         tn + fp,
         out=np.zeros_like(tn, dtype=np.float64),
         where=(tn + fp) != 0,
     )
-    acc = (tp + tn) / float(y_sorted.size)
-    bacc = 0.5 * (recall + tnr)
-    f1 = np.divide(
-        2.0 * precision * recall,
-        precision + recall,
-        out=np.zeros_like(precision, dtype=np.float64),
-        where=(precision + recall) != 0,
+
+    f1_neg = np.divide(
+        2.0 * precision_neg * recall_neg,
+        precision_neg + recall_neg,
+        out=np.zeros_like(precision_neg, dtype=np.float64),
+        where=(precision_neg + recall_neg) != 0,
     )
+
+# ---------- Macro metrics ----------
+
+    precision = (precision_pos + precision_neg) / 2.0
+    recall = (recall_pos + recall_neg) / 2.0
+    f1 = (f1_pos + f1_neg) / 2.0
+
+    acc = (tp + tn) / float(y_sorted.size)
+
+    bacc = recall
 
     if objective == "f1":
         values = f1
@@ -463,10 +529,12 @@ def main():
         )
 
     macro_acc = float(np.mean([metrics_by_task[t]["acc"] for t in available]))
+    macro_bacc = float(np.mean([metrics_by_task[t]["bacc"] for t in available]))
+    macro_precision = float(np.mean([metrics_by_task[t]["precision"] for t in available]))
+    macro_recall = float(np.mean([metrics_by_task[t]["recall"] for t in available]))
     macro_f1 = float(np.mean([metrics_by_task[t]["f1"] for t in available]))
     macro_roc_auc = float(np.mean([metrics_by_task[t]["roc_auc"] for t in available]))
     macro_pr_auc = float(np.mean([metrics_by_task[t]["pr_auc"] for t in available]))
-    macro_recall = float(np.mean([metrics_by_task[t]["recall"] for t in available]))
 
     print("=" * 72)
     print("CELEBA OVR AGGREGATION")
@@ -489,7 +557,18 @@ def main():
     if missing:
         print(f"Missing   : {', '.join(missing)}")
     print()
-    print(f"{'task':<22} {'thr':>7} {'acc':>8} {'bacc':>8} {'f1':>8} {'prec':>8} {'rec':>8} {'pos%':>8}")
+    print(
+    f"{'task':<22} "
+    f"{'thr':>7} "
+    f"{'acc':>8} "
+    f"{'bacc':>8} "
+    f"{'f1':>8} "
+    f"{'prec':>8} "
+    f"{'rec':>8} "
+    f"{'roc':>8} "
+    f"{'pr':>8} "
+    f"{'pos%':>8}"
+    )
     print("-" * 72)
     for task in available:
         m = metrics_by_task[task]
@@ -499,11 +578,13 @@ def main():
         )
 
     print("-" * 72)
-    print(f"Macro-ACC : {macro_acc:.4f}")
-    print(f"Macro-F1  : {macro_f1:.4f}")
-    print(f"Macro-ROC-AUC : {macro_roc_auc:.4f}")
-    print(f"Macro-PR-AUC  : {macro_pr_auc:.4f}")
-    print(f"Macro-RECALL  : {macro_recall:.4f}")
+    print(f"Macro-ACC       : {macro_acc:.4f}")
+    print(f"Macro-BACC      : {macro_bacc:.4f}")
+    print(f"Macro-Precision : {macro_precision:.4f}")
+    print(f"Macro-Recall    : {macro_recall:.4f}")
+    print(f"Macro-F1        : {macro_f1:.4f}")
+    print(f"Macro-ROC-AUC   : {macro_roc_auc:.4f}")
+    print(f"Macro-PR-AUC    : {macro_pr_auc:.4f}")
     print("=" * 72)
 
     report = {
@@ -520,8 +601,10 @@ def main():
         "selected_tasks": eval_tasks,
         "available_tasks": available,
         "missing_tasks": missing,
-        "recall_macro": macro_recall,
         "macro_acc": macro_acc,
+        "macro_bacc": macro_bacc,
+        "macro_precision": macro_precision,
+        "macro_recall": macro_recall,
         "macro_f1": macro_f1,
         "macro_roc_auc": macro_roc_auc,
         "macro_pr_auc": macro_pr_auc,

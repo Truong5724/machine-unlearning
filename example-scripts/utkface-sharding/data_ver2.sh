@@ -37,7 +37,7 @@ test_metrics=$(python aggregation_ver2.py \
   --container utkface \
   --shards ${shards} \
   --dataset datasets/UTKFace/datasetfile_ver2 \
-  --label ${label} 2>&1 | tail -n 10)
+  --label ${label} 2>&1)
 
 echo "Test metrics:"
 echo "${test_metrics}"
@@ -46,7 +46,7 @@ echo "${test_metrics}"
 unlearn_acc="N/A"
 if [[ "${label}" != "0" ]]; then
   echo "📉 Computing accuracy on forgotten set..."
-  unlearn_output=$(python evaluate_forgot.py \
+  unlearn_output=$(python example-scripts/utkface-sharding/evaluate_forgot.py \
     --container utkface \
     --label "${label}" \
     --shards ${shards} \

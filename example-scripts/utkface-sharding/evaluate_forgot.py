@@ -1,217 +1,170 @@
 """
-evaluate_forgot.py - Đánh giá model trên tập FORGOT
-
-Mục đích: Kiểm tra xem model có thực sự quên dữ liệu không
-- Model baseline (label=0): Accuracy cao trên forgot set
-- Model unlearned (label=100): Accuracy THẤP trên forgot set (chứng tỏ đã quên!)
-
-Usage:
-    python evaluate_forgot.py --container utkface --label 100 --shards 4
+Evaluate joint multitask model on the FORGOT set (unlearned training samples).
+Aggregates predictions across data shards via uniform voting.
 """
 
-import numpy as np
-import torch
-import json
 import argparse
+import importlib
+import json
 import os
 import sys
-from importlib import import_module
-from sklearn.metrics import accuracy_score, balanced_accuracy_score, precision_score, f1_score
+import numpy as np
+import torch
+from torch.nn.functional import softmax
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--container', default='utkface', help='Container name')
-parser.add_argument('--label', type=int, required=True, help='Label to evaluate')
-parser.add_argument('--shards', type=int, required=True, help='Number of shards')
-parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
-parser.add_argument('--model', default='utkface', help='Model architecture')
-parser.add_argument('--dataset', default='datasets/UTKFace/datasetfile', help='Dataset file')
-args = parser.parse_args()
+TASKS = ("gender", "age", "race")
+NUM_CLASSES = {"gender": 2, "age": 3, "race": 5}
 
-# Load dataset metadata
-with open(args.dataset) as f:
-    datasetfile = json.loads(f.read())
 
-input_shape = tuple(datasetfile["input_shape"])
-nb_classes = datasetfile["nb_classes"]
+def load_dataset(dataset_path):
+    with open(dataset_path) as f:
+        datasetfile = json.loads(f.read())
+    module_name = ".".join(
+        dataset_path.replace("\\", "/").split("/")[:-1] + [datasetfile["dataloader"]]
+    )
+    dataloader = importlib.import_module(module_name)
+    return datasetfile, dataloader
 
-# Ensure repo root and dataset directory are importable regardless of cwd.
-script_dir = os.path.dirname(os.path.abspath(__file__))
-repo_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
-dataset_dir = os.path.dirname(os.path.abspath(args.dataset))
-sys.path.insert(0, repo_root)
-sys.path.insert(0, dataset_dir)
 
-# Load dataloader
-dataloader = import_module(datasetfile['dataloader'])
+def compute_metrics(y_true, y_pred, num_classes):
+    y_true = np.asarray(y_true, dtype=np.int64)
+    y_pred = np.asarray(y_pred, dtype=np.int64)
+    acc = float(np.mean(y_true == y_pred)) if y_true.size else 0.0
 
-# Load model architecture
-model_lib = import_module(f"architectures.{args.model}")
+    precisions, recalls, f1s = [], [], []
+    for cls in range(num_classes):
+        tp = float(np.sum((y_true == cls) & (y_pred == cls)))
+        fp = float(np.sum((y_true != cls) & (y_pred == cls)))
+        fn = float(np.sum((y_true == cls) & (y_pred != cls)))
 
-# Device
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = 2.0 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
 
-print("=" * 70)
-print("EVALUATE ON FORGOT SET")
-print("=" * 70)
-print(f"Container: {args.container}")
-print(f"Label: {args.label}")
-print(f"Shards: {args.shards}")
-print()
+        precisions.append(precision)
+        recalls.append(recall)
+        f1s.append(f1)
 
-# Load splitfile và requestfile
-splitfile = np.load(f'containers/{args.container}/splitfile.npy', allow_pickle=True)
-requestfile = np.load(f'containers/{args.container}/requestfile:{args.label}.npy', allow_pickle=True)
+    return {
+        "acc": acc,
+        "precision": float(np.mean(precisions)),
+        "recall": float(np.mean(recalls)),
+        "f1": float(np.mean(f1s)),
+        "bacc": float(np.mean(recalls))
+    }
 
-# Tổng hợp tất cả forgot indices
-all_forgot_indices = []
-for shard_idx in range(args.shards):
-    forgot_in_shard = requestfile[shard_idx]
-    all_forgot_indices.extend(forgot_in_shard)
 
-all_forgot_indices = np.array(all_forgot_indices)
-
-if len(all_forgot_indices) == 0:
-    print("⚠️  No forgot data (label=0 is baseline)")
-    print(f"   Use label>0 to evaluate unlearning")
-    exit(0)
-
-print(f"📊 Forgot set size: {len(all_forgot_indices)} samples")
-print()
-
-# Evaluate từng shard
-print("🔄 Evaluating each shard on forgot set...")
-print()
-
-shard_predictions = []
-shard_accuracies = []
-
-for shard_idx in range(args.shards):
-    print(f"Shard {shard_idx}:")
-    
-    # Load model
-    checkpoint = f"containers/{args.container}/cache/shard-{shard_idx}:{args.label}.pt"
-    
-    try:
-        model = model_lib.Model(input_shape, nb_classes, dropout_rate=0.4)
-        model.load_state_dict(torch.load(checkpoint, map_location=device))
-        model.to(device)
-        model.eval()
-    except FileNotFoundError:
-        print(f"  ❌ Checkpoint not found: {checkpoint}")
-        continue
-    
-    # Get forgot indices từ shard này
-    forgot_in_shard = requestfile[shard_idx]
-    
-    if len(forgot_in_shard) == 0:
-        print(f"  ⚠️  No forgot data in this shard")
-        continue
-    
-    print(f"  Forgot samples: {len(forgot_in_shard)}")
-    
-    # Load forgot data
-    X_forgot, y_forgot = dataloader.load(forgot_in_shard, category='train')
-    
-    # Predict
-    correct = 0
-    total = 0
-    
-    with torch.no_grad():
-        for i in range(0, len(X_forgot), args.batch_size):
-            batch_X = X_forgot[i:i+args.batch_size]
-            batch_y = y_forgot[i:i+args.batch_size]
-            
-            gpu_X = torch.from_numpy(batch_X).to(device)
-            gpu_y = torch.from_numpy(batch_y).to(device)
-            
-            logits = model(gpu_X)
-            preds = torch.argmax(logits, dim=1)
-            
-            correct += (preds == gpu_y).sum().item()
-            total += len(batch_y)
-    
-    accuracy = correct / total * 100
-    shard_accuracies.append(accuracy)
-    
-    print(f"  Accuracy on forgot set: {accuracy:.2f}%")
-    print()
-
-# Overall accuracy
-if len(shard_accuracies) > 0:
-    avg_accuracy = np.mean(shard_accuracies)
-    
-    print("=" * 70)
-    print("RESULTS")
-    print("=" * 70)
-    print(f"Average accuracy on forgot set: {avg_accuracy:.2f}%")
-    print()
-    
-    # Interpretation
-    print("💡 INTERPRETATION:")
-    if avg_accuracy > 80:
-        print("  ❌ Model still remembers forgot data well!")
-        print("     Unlearning may NOT be effective")
-    elif avg_accuracy > 60:
-        print("  ⚠️  Model partially remembers forgot data")
-        print("     Unlearning has some effect")
-    elif avg_accuracy > 40:
-        print("  ✅ Model performance degraded significantly")
-        print("     Unlearning is working!")
+def aggregate_shard_predictions(all_shard_outputs, strategy="uniform", weights=None):
+    outputs = np.array(all_shard_outputs)
+    if weights is None:
+        w = np.ones(outputs.shape[0]) / outputs.shape[0]
     else:
-        print("  ✅✅ Model has largely forgotten the data")
-        print("     Strong unlearning effect!")
-    
-    print()
-    print("📊 COMPARISON GUIDE:")
-    print("  Baseline (label=0): Should be ~92% on forgot set")
-    print(f"  Unlearned (label={args.label}): {avg_accuracy:.2f}% on forgot set")
-    print(f"  Difference: {92 - avg_accuracy:.2f}% ← Unlearning effect!")
-    
-else:
-    print("❌ No results - check if models are trained")
+        w = np.asarray(weights, dtype=float)
+        w = w / w.sum()
+    return np.argmax(
+        np.tensordot(w.reshape(1, -1), outputs, axes=1), axis=2
+    ).reshape(outputs.shape[1])
 
-print("=" * 70)
 
-# Optional aggregate 4-metric summary on the full forgot set.
-if len(all_forgot_indices) > 0:
-    all_preds = []
-    all_true = []
-    for shard_idx in range(args.shards):
-        checkpoint = f"containers/{args.container}/cache/shard-{shard_idx}:{args.label}.pt"
-        if not os.path.exists(checkpoint):
-            continue
-
+def get_training_time(container, label):
+    """Tính tổng training time từ các file .time"""
+    total = 0.0
+    import glob
+    time_files = glob.glob(f"containers/{container}/times/shard-*:${label}.time")
+    for f in time_files:
         try:
-            model = model_lib.Model(input_shape, nb_classes, dropout_rate=0.4)
-            model.load_state_dict(torch.load(checkpoint, map_location=device))
-            model.to(device)
+            with open(f, 'r') as file:
+                total += float(file.read().strip())
+        except:
+            pass
+    return total
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--container", default="utkface")
+    parser.add_argument("--label", required=True)
+    parser.add_argument("--shards", type=int, default=3)
+    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--dataset", default="datasets/UTKFace/datasetfile_ver2")
+    parser.add_argument("--strategy", default="uniform", choices=["uniform", "proportional"])
+    args = parser.parse_args()
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
+    sys.path.insert(0, repo_root)
+
+    from architectures.utkface_multitask import MultiTaskModel
+
+    datasetfile, dataloader = load_dataset(args.dataset)
+    input_shape = tuple(datasetfile["input_shape"])
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    # Load forgot samples
+    requestfile = np.load(f"containers/{args.container}/requestfile:{args.label}.npy", allow_pickle=True)
+    all_forgot = np.unique(
+        np.concatenate([np.asarray(r, dtype=np.int64) for r in requestfile if len(r) > 0])
+    ) if any(len(r) > 0 for r in requestfile) else np.array([], dtype=np.int64)
+
+    print(f"✅ Đã kết nối dataset: Train={datasetfile.get('nb_train', 'N/A')}, Test={datasetfile.get('nb_test', 'N/A')}")
+    print(f"📊 Forgot samples: {len(all_forgot)}")
+
+    # Training time
+    train_time = get_training_time(args.container, args.label)
+    print(f"Training time: {train_time}s")
+
+    if len(all_forgot) == 0:
+        print("0.0000, 0.0000, 0.0000, 0.0000, -1.0000")
+        return
+
+    if args.strategy == "proportional":
+        split = np.load(f"containers/{args.container}/splitfile.npy", allow_pickle=True)
+        weights = np.array([len(s) for s in split], dtype=float)
+    else:
+        weights = None
+
+    _, forgot_labels = dataloader.load_multitask(all_forgot, category="train")
+
+    task_metrics = {}
+    for task in TASKS:
+        shard_outputs = []
+        for shard_idx in range(args.shards):
+            ckpt = f"containers/{args.container}/cache/shard-{shard_idx}:{args.label}.pt"
+            if not os.path.exists(ckpt):
+                continue
+
+            model = MultiTaskModel(input_shape=input_shape).to(device)
+            model.load_state_dict(torch.load(ckpt, map_location=device))
             model.eval()
-        except FileNotFoundError:
+
+            probs = np.empty((0, NUM_CLASSES[task]), dtype=np.float32)
+            with torch.no_grad():
+                for i in range(0, len(all_forgot), args.batch_size):
+                    batch_ids = all_forgot[i : i + args.batch_size]
+                    images, _ = dataloader.load_multitask(batch_ids, category="train")
+                    x = torch.from_numpy(images).to(device)
+                    logits = model(x)[task]
+                    probs = np.concatenate((probs, softmax(logits, dim=1).cpu().numpy()), axis=0)
+            shard_outputs.append(probs)
+
+        if not shard_outputs:
             continue
 
-        forgot_in_shard = requestfile[shard_idx]
-        if len(forgot_in_shard) == 0:
-            continue
+        preds = aggregate_shard_predictions(shard_outputs, args.strategy, weights)
+        y_true = np.asarray(forgot_labels[task], dtype=np.int64)
+        task_metrics[task] = compute_metrics(y_true, preds, NUM_CLASSES[task])
 
-        X_forgot, y_forgot = dataloader.load(forgot_in_shard, category='train')
-        with torch.no_grad():
-            for i in range(0, len(X_forgot), args.batch_size):
-                batch_X = X_forgot[i:i+args.batch_size]
-                batch_y = y_forgot[i:i+args.batch_size]
-                gpu_X = torch.from_numpy(batch_X).to(device)
-                logits = model(gpu_X)
-                preds = torch.argmax(logits, dim=1).cpu().numpy()
-                all_preds.extend(preds.tolist())
-                all_true.extend(batch_y.tolist())
+    if task_metrics:
+        mean_acc = np.mean([m["acc"] for m in task_metrics.values()])
+        mean_bacc = np.mean([m["bacc"] for m in task_metrics.values()])
+        mean_f1 = np.mean([m["f1"] for m in task_metrics.values()])
+        mean_recall = np.mean([m["recall"] for m in task_metrics.values()])
+        mean_precision = np.mean([m["precision"] for m in task_metrics.values()])
 
-    if len(all_true) > 0:
-        all_true = np.asarray(all_true, dtype=np.int64)
-        all_preds = np.asarray(all_preds, dtype=np.int64)
-        forgot_acc = accuracy_score(all_true, all_preds)
-        forgot_bacc = balanced_accuracy_score(all_true, all_preds)
-        forgot_precision = precision_score(all_true, all_preds, average='macro', zero_division=0)
-        forgot_f1 = f1_score(all_true, all_preds, average='macro', zero_division=0)
-        print(
-            f"Forgot-set metrics: acc={forgot_acc:.4f}, bacc={forgot_bacc:.4f}, "
-            f"precision={forgot_precision:.4f}, f1={forgot_f1:.4f}"
-        )
+        print(f"{mean_acc:.4f}, {mean_bacc:.4f}, {mean_f1:.4f}, {mean_recall:.4f}, {mean_precision:.4f}")
+    else:
+        print("0.0000, 0.0000, 0.0000, 0.0000, -1.0000")
+
+
+if __name__ == "__main__":
+    main()

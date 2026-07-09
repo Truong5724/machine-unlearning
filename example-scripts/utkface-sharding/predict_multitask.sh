@@ -38,7 +38,7 @@ for i in $(seq 0 $((shards-1))); do
         exit 1
     fi
 
-    python sisa_utkface.py \
+    python sisa_utkface_multitask.py \
         --test \
         --container utkface \
         --shard "${i}" \
