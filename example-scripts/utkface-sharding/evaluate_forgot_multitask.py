@@ -70,7 +70,7 @@ def get_training_time(container, label):
     """Tính tổng training time từ các file .time"""
     total = 0.0
     import glob
-    time_files = glob.glob(f"containers/{container}/times/shard-*:${label}.time")
+    time_files = glob.glob(f"containers/{container}/times/shard-*:{label}.time")
     for f in time_files:
         try:
             with open(f, 'r') as file:

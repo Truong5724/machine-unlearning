@@ -118,18 +118,18 @@ def _apply_transform(images, category):
 
     for img in images:
 
-        img = img.transpose(1,2,0)  # CHW → HWC
-        img = img.astype(np.uint8)
+        # CHW uint8 -> float tensor
+        img = torch.from_numpy(img).float() / 255.0
 
-        if category == "train":
-            img = train_transform(img)
-        else:
-            img = test_transform(img)
+        img = transforms.functional.normalize(
+            img,
+            mean=[0.5, 0.5, 0.5],
+            std=[0.5, 0.5, 0.5]
+        )
 
         processed.append(img)
 
     return torch.stack(processed).numpy()
-
 
 # ─────────────────────────────────────────────
 # MAIN API

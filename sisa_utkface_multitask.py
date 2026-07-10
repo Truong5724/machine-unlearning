@@ -30,26 +30,25 @@ def load_dataset_config(datasetfile_path):
 
 
 def fetch_multitask_shard_batch(
-    container, label, shard, batch_size, dataset, offset=0, until=None
-):
-    shards = np.load(f"containers/{container}/splitfile.npy", allow_pickle=True)
-    requests = np.load(f"containers/{container}/requestfile:{label}.npy", allow_pickle=True)
+    retained_indices,
+    batch_size,
+    dataloader,
+    offset=0,
+    until=None
+    ):
 
-    datasetfile, dataloader = load_dataset_config(dataset)
-    if until is None or until > shards[shard].shape[0]:
-        until = shards[shard].shape[0]
+    if until is None or until > len(retained_indices):
+        until = len(retained_indices)
 
-    limit = offset
-    while limit <= until - batch_size:
-        limit += batch_size
-        indices = np.setdiff1d(shards[shard][limit - batch_size : limit], requests[shard])
-        if indices.size > 0:
-            yield dataloader.load_multitask(indices, category="train")
-    if limit < until:
-        indices = np.setdiff1d(shards[shard][limit:until], requests[shard])
-        if indices.size > 0:
-            yield dataloader.load_multitask(indices, category="train")
+    for start in range(offset, until, batch_size):
 
+        indices = retained_indices[start:start+batch_size]
+
+        if len(indices) > 0:
+            yield dataloader.load_multitask(
+                indices,
+                category="train"
+            )
 
 def make_optimizer(model, name, learning_rate):
     if name == "adam":
@@ -111,6 +110,28 @@ def train(args):
     model = MultiTaskModel(input_shape=input_shape, dropout_rate=args.dropout_rate).to(device)
 
     shard_size = sizeOfShard(args.container, args.shard)
+    shards = np.load(
+        f"containers/{args.container}/splitfile.npy",
+        allow_pickle=True
+    )
+
+    requests = np.load(
+        f"containers/{args.container}/requestfile:{args.label}.npy",
+        allow_pickle=True
+    )
+
+    retained_indices = np.setdiff1d(
+        shards[args.shard],
+        requests[args.shard],
+        assume_unique=True
+    )
+    retained = np.sort(retained_indices)
+
+    print("="*50)
+    print("Original:", len(shards[args.shard]))
+    print("Removed :", len(requests[args.shard]))
+    print("Retained:", len(retained_indices))
+    print("="*50)
     if shard_size == 0:
         print(f"Shard {args.shard} is empty.")
         return
@@ -125,6 +146,13 @@ def train(args):
             f"containers/{args.container}/requestfile:{args.label}.npy", allow_pickle=True
         )
         retained = np.setdiff1d(shards[args.shard], requests[args.shard])
+        print("=" * 50)
+        print(f"Label    : {args.label}")
+        print(f"Shard    : {args.shard}")
+        print(f"Original : {len(shards[args.shard])}")
+        print(f"Removed  : {len(requests[args.shard])}")
+        print(f"Retained : {len(retained)}")
+        print("=" * 50)
         if retained.size > 0:
             _, all_labels = dataloader.load_multitask(retained, category="train")
             race_weight = make_class_weight(all_labels["race"], NUM_CLASSES["race"], device)
@@ -136,6 +164,8 @@ def train(args):
     loaded = False
     elapsed_time = 0.0
     cumulative_train_time = 0.0
+    cumulative_batch_time = 0.0      # thời gian compute thuần (forward+backward)
+    cumulative_overhead_time = 0.0   # thời gian load data + phần linh tinh khác
 
     for sl in tqdm(range(args.slices), desc=f"Shard {args.shard}"):
         slice_hash = getShardHash(
@@ -175,21 +205,33 @@ def train(args):
 
         until = (sl + 1) * slice_size if sl < args.slices - 1 else None
 
+        epoch_samples = 0
+        epoch_batches = 0
+
         for epoch in tqdm(range(start_epoch, slice_epochs), leave=False):
             model.train()
             total = 0
             task_correct = {task: 0 for task in TASKS}
             running_loss = 0.0
+
+            # ===== Time debug =====
             epoch_start = time()
+            epoch_batch_time = 0.0
+            # ======================
 
             for images, labels in fetch_multitask_shard_batch(
-                args.container,
-                args.label,
-                args.shard,
+                retained_indices,
                 args.batch_size,
-                args.dataset,
+                dataloader,
                 until=until,
             ):
+                # ===== Time debug =====
+                batch_start = time()
+                # ======================
+
+                epoch_batches += 1
+                epoch_samples += images.shape[0]
+
                 x = torch.from_numpy(images).to(device)
                 outputs = model(x)
                 loss = multitask_loss(outputs, labels, loss_fns)
@@ -198,23 +240,42 @@ def train(args):
                 loss.backward()
                 optimizer.step()
 
+                # ===== Time debug =====
+                epoch_batch_time += time() - batch_start
+                # ======================
+
                 running_loss += loss.item()
                 batch_size = x.shape[0]
                 total += batch_size
+
                 for task in TASKS:
                     y = torch.from_numpy(labels[task]).to(device).long()
                     preds = torch.argmax(outputs[task], dim=1)
                     task_correct[task] += (preds == y).sum().item()
 
-            cumulative_train_time += time() - epoch_start
+            # ===== Time debug =====
+            epoch_total_time = time() - epoch_start
+            cumulative_train_time += epoch_total_time
+            cumulative_overhead_time += (epoch_total_time - epoch_batch_time)
+            # ======================
+
             accs = {task: 100.0 * task_correct[task] / max(total, 1) for task in TASKS}
             mean_acc = np.mean(list(accs.values()))
+
             print(
                 f"[Shard {args.shard}][Slice {sl}][Epoch {epoch + 1}] "
                 f"loss={running_loss:.4f} "
                 f"gender={accs['gender']:.1f}% age={accs['age']:.1f}% "
                 f"race={accs['race']:.1f}% mean={mean_acc:.1f}%"
             )
+
+            # ===== Time debug =====
+            print(
+                f"    Time: total={epoch_total_time:.2f}s | "
+                f"batch={epoch_batch_time:.2f}s | "
+                f"overhead={epoch_total_time - epoch_batch_time:.2f}s"
+            )
+            # ======================
 
             if (
                 args.chkpt_interval != -1
@@ -229,6 +290,7 @@ def train(args):
                 ) as f:
                     f.write(f"{cumulative_train_time + elapsed_time}\n")
 
+        print(f"DEBUG: samples={epoch_samples}, batches={epoch_batches}")
         torch.save(model.state_dict(), final_ckpt)
         with open(final_time, "w") as f:
             f.write(f"{cumulative_train_time + elapsed_time}\n")
@@ -243,7 +305,8 @@ def train(args):
             if os.path.exists(time_link) or os.path.islink(time_link):
                 os.remove(time_link)
             os.symlink(f"{slice_hash}.time", time_link)
-
+    training_time = cumulative_train_time - cumulative_overhead_time
+    print(f"[Shard {args.shard}][Label {args.label}] Training time (total - overhead) = {training_time:.2f}s")
 
 @torch.no_grad()
 def test(args):

@@ -222,14 +222,67 @@ def group_accuracy(task_list, y_dict, preds, exclude_tasks=None, missing_tasks=N
     stack = np.stack([preds[t] for t in tasks], axis=1)
     y_hat = np.argmax(stack, axis=1)
 
-    y_true = np.zeros_like(y_hat)
+    # y_true = -1 nghĩa là ảnh thuộc class đã bị unlearn -> luôn tính sai
+    y_true = np.full(len(y_hat), -1, dtype=np.int64)
+
     for i, t in enumerate(tasks):
         y_true[np.asarray(y_dict[t], dtype=np.int64) == 1] = i
 
-    acc = float((y_hat == y_true).mean())
+    correct = (y_hat == y_true)
+    acc = float(np.mean(correct))
+
     return acc, len(tasks)
 
+def group_macro_metrics(
+    task_list,
+    y_dict,
+    preds,
+    thresholds,
+    missing_tasks=None,
+):
+    """
+    Macro Precision / Recall / F1 của một thuộc tính (Gender/Age/Race).
 
+    Nếu một head đã bị unlearn (missing), metric của head đó được tính là 0
+    thay vì bỏ qua.
+    """
+
+    missing_set = set(missing_tasks or [])
+
+    precisions = []
+    recalls = []
+    f1s = []
+
+    for task in task_list:
+
+        # Head đã bị unlearn -> metric = 0
+        if task in missing_set:
+            precisions.append(0.0)
+            recalls.append(0.0)
+            f1s.append(0.0)
+            continue
+
+        if task not in preds:
+            continue
+
+        y_true = np.asarray(y_dict[task], dtype=np.int64)
+        y_score = np.asarray(preds[task], dtype=np.float64)
+
+        thr = thresholds.get(task, 0.5)
+        m = binary_metrics(y_true, y_score, thr)
+
+        precisions.append(m["precision"])
+        recalls.append(m["recall"])
+        f1s.append(m["f1"])
+
+    if len(precisions) == 0:
+        return 0.0, 0.0, 0.0
+
+    return (
+        float(np.mean(precisions)),
+        float(np.mean(recalls)),
+        float(np.mean(f1s)),
+    )
 def active_tasks_for_mean(attribute_groups, missing_tasks=None, exclude_tasks=None):
     """Return tasks that should count toward overall mean metrics.
 
@@ -421,6 +474,7 @@ def main():
     accs = {}
     baccs = {}
     f1s = {}
+    recalls = {}
     pras = {}
     head_supports = {}
     thresholds = {}
@@ -453,6 +507,7 @@ def main():
             accs[task] = 0.0
             baccs[task] = 0.0
             f1s[task] = 0.0
+            recalls[task] = 0.0
             pras[task] = 0.0
             head_supports[task] = int(np.sum(np.asarray(y_eval_dict[task], dtype=np.int64) == 1))
             print(
@@ -479,6 +534,7 @@ def main():
         accs[task] = m["acc"]
         baccs[task] = m["bacc"]
         f1s[task] = m["f1"]
+        recalls[task] = m["recall"]
         pras[task] = pr_auc
         head_supports[task] = int(np.sum(y_true == 1))
 
@@ -487,24 +543,25 @@ def main():
             f"{m['f1']*100:8.2f} {pr_auc*100:8.2f}"
         )
 
-    # Group-level accuracy (gender / age / race)
-    print("\nGroup-level accuracy (argmax trong mỗi group):")
+    # Group-level metrics (Gender / Age / Race)
 
-    gender_acc, g_heads = group_accuracy(
+    gender_acc, _ = group_accuracy(
         ["gender_female", "gender_male"],
         y_eval_dict,
         preds_eval,
         exclude_tasks=exclude_tasks,
         missing_tasks=missing_eval_tasks,
     )
-    age_acc, a_heads = group_accuracy(
+
+    age_acc, _ = group_accuracy(
         ["age_bin0", "age_bin1", "age_bin2"],
         y_eval_dict,
         preds_eval,
         exclude_tasks=exclude_tasks,
         missing_tasks=missing_eval_tasks,
     )
-    race_acc, r_heads = group_accuracy(
+
+    race_acc, _ = group_accuracy(
         ["race_white", "race_black", "race_asian", "race_indian", "race_others"],
         y_eval_dict,
         preds_eval,
@@ -512,23 +569,67 @@ def main():
         missing_tasks=missing_eval_tasks,
     )
 
-    if gender_acc is None:
-        print("Gender: N/A (no head after exclusion)")
-    else:
-        suffix = "" if g_heads == 2 else f" (partial heads {g_heads}/2)"
-        print(f"Gender: {gender_acc*100:6.2f}%{suffix}")
+    gender_pre, gender_rec, gender_f1 = group_macro_metrics(
+        ["gender_female", "gender_male"],
+        y_eval_dict,
+        preds_eval,
+        thresholds,
+        missing_eval_tasks,
+    )
 
-    if age_acc is None:
-        print("Age bins: N/A (no head after exclusion)")
-    else:
-        suffix = "" if a_heads == 3 else f" (partial heads {a_heads}/3)"
-        print(f"Age bins: {age_acc*100:6.2f}%{suffix}")
+    age_pre, age_rec, age_f1 = group_macro_metrics(
+        ["age_bin0", "age_bin1", "age_bin2"],
+        y_eval_dict,
+        preds_eval,
+        thresholds,
+        missing_eval_tasks,
+    )
 
-    if race_acc is None:
-        print("Race   : N/A (no head after exclusion)")
-    else:
-        suffix = "" if r_heads == 5 else f" (partial heads {r_heads}/5)"
-        print(f"Race   : {race_acc*100:6.2f}%{suffix}")
+    race_pre, race_rec, race_f1 = group_macro_metrics(
+        ["race_white", "race_black", "race_asian", "race_indian", "race_others"],
+        y_eval_dict,
+        preds_eval,
+        thresholds,
+        missing_eval_tasks,
+    )
+
+    print("\n===================================================================")
+    print("ATTRIBUTE METRICS")
+    print("===================================================================")
+
+    print(
+        f"{'Attribute':<12}"
+        f"{'Acc':>10}"
+        f"{'Macro-Pre':>12}"
+        f"{'Macro-Rec':>12}"
+        f"{'Macro-F1':>12}"
+    )
+
+    print("-" * 58)
+
+    print(
+        f"{'Gender':<12}"
+        f"{gender_acc*100:10.2f}"
+        f"{gender_pre*100:12.2f}"
+        f"{gender_rec*100:12.2f}"
+        f"{gender_f1*100:12.2f}"
+    )
+
+    print(
+        f"{'Age':<12}"
+        f"{age_acc*100:10.2f}"
+        f"{age_pre*100:12.2f}"
+        f"{age_rec*100:12.2f}"
+        f"{age_f1*100:12.2f}"
+    )
+
+    print(
+        f"{'Race':<12}"
+        f"{race_acc*100:10.2f}"
+        f"{race_pre*100:12.2f}"
+        f"{race_rec*100:12.2f}"
+        f"{race_f1*100:12.2f}"
+    )
 
     if args.tune_thresholds:
         print(
@@ -564,7 +665,7 @@ def main():
     print("Mean head bal. acc :", mean_over_tasks(baccs, mean_tasks) * 100, "%")
     print("Mean head F1       :", mean_over_tasks(f1s, mean_tasks) * 100, "%")
     print("Mean head PR-AUC   :", mean_over_tasks(pras, mean_tasks) * 100, "%")
-
+    print("Mean head Recall   :", mean_over_tasks(recalls, mean_tasks) * 100, "%")
     if args.save_thresholds:
         out_dir, legacy_path = save_thresholds_combined(
             args.container,
