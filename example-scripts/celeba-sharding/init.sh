@@ -44,7 +44,7 @@ fi
 mkdir -p "containers/celeba/cache" "containers/celeba/times" "containers/celeba/outputs"
 
 echo "🔄 Creating shard partition..."
-python distribution.py \
+python distribution_safe.py \
     --shards "${shards}" \
     --distribution uniform \
     --container "celeba" \
