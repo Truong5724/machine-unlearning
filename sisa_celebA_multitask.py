@@ -92,7 +92,6 @@ def train(args):
 
     loaded = False
     elapsed_time = 0.0
-    cumulative_train_time = 0.0
 
     for sl in tqdm(range(args.slices), desc=f"Shard {args.shard}"):
         slice_hash = getShardHash(
@@ -132,10 +131,11 @@ def train(args):
 
         until = (sl + 1) * slice_size if sl < args.slices - 1 else None
 
+        train_time = 0.0
+
         for epoch in tqdm(range(start_epoch, slice_epochs), leave=False):
             model.train()
             running_loss = 0.0
-            epoch_start = time()
 
             for images, labels in fetch_celeba_batch(
                 args.container,
@@ -146,6 +146,9 @@ def train(args):
                 until=until,
             ):
                 x = torch.from_numpy(images).to(device)
+
+                epoch_start = time()
+
                 outputs = model(x)                    # dict {attr_0: ..., attr_1: ..., ...}
                 loss = multitask_loss(outputs, labels, loss_fns)
 
@@ -153,13 +156,14 @@ def train(args):
                 loss.backward()
                 optimizer.step()
 
-                running_loss += loss.item()
+                train_time += time() - epoch_start
 
-            cumulative_train_time += time() - epoch_start
+                running_loss += loss.item()
 
             print(
                 f"[Shard {args.shard}][Slice {sl}][Epoch {epoch + 1}] "
                 f"loss={running_loss:.4f}"
+                f"Train time={train_time:.2f}s"
             )
 
             if (
@@ -173,7 +177,7 @@ def train(args):
 
         torch.save(model.state_dict(), final_ckpt)
         with open(final_time, "w") as f:
-            f.write(f"{cumulative_train_time + elapsed_time}\n")
+            f.write(f"{train_time + elapsed_time}\n")
 
         if sl == args.slices - 1:
             shard_link = f"containers/{args.container}/cache/shard-{args.shard}:{args.label}.pt"

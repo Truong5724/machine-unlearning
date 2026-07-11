@@ -163,9 +163,6 @@ def train(args):
 
     loaded = False
     elapsed_time = 0.0
-    cumulative_train_time = 0.0
-    cumulative_batch_time = 0.0      # thời gian compute thuần (forward+backward)
-    cumulative_overhead_time = 0.0   # thời gian load data + phần linh tinh khác
 
     for sl in tqdm(range(args.slices), desc=f"Shard {args.shard}"):
         slice_hash = getShardHash(
@@ -208,16 +205,13 @@ def train(args):
         epoch_samples = 0
         epoch_batches = 0
 
+        train_time = 0.0
+
         for epoch in tqdm(range(start_epoch, slice_epochs), leave=False):
             model.train()
             total = 0
             task_correct = {task: 0 for task in TASKS}
             running_loss = 0.0
-
-            # ===== Time debug =====
-            epoch_start = time()
-            epoch_batch_time = 0.0
-            # ======================
 
             for images, labels in fetch_multitask_shard_batch(
                 retained_indices,
@@ -225,14 +219,15 @@ def train(args):
                 dataloader,
                 until=until,
             ):
-                # ===== Time debug =====
-                batch_start = time()
-                # ======================
-
                 epoch_batches += 1
                 epoch_samples += images.shape[0]
 
                 x = torch.from_numpy(images).to(device)
+
+                # ===== Time debug =====
+                batch_start = time()
+                # ======================
+
                 outputs = model(x)
                 loss = multitask_loss(outputs, labels, loss_fns)
 
@@ -241,7 +236,7 @@ def train(args):
                 optimizer.step()
 
                 # ===== Time debug =====
-                epoch_batch_time += time() - batch_start
+                train_time += time() - batch_start
                 # ======================
 
                 running_loss += loss.item()
@@ -253,11 +248,6 @@ def train(args):
                     preds = torch.argmax(outputs[task], dim=1)
                     task_correct[task] += (preds == y).sum().item()
 
-            # ===== Time debug =====
-            epoch_total_time = time() - epoch_start
-            cumulative_train_time += epoch_total_time
-            cumulative_overhead_time += (epoch_total_time - epoch_batch_time)
-            # ======================
 
             accs = {task: 100.0 * task_correct[task] / max(total, 1) for task in TASKS}
             mean_acc = np.mean(list(accs.values()))
@@ -271,9 +261,7 @@ def train(args):
 
             # ===== Time debug =====
             print(
-                f"    Time: total={epoch_total_time:.2f}s | "
-                f"batch={epoch_batch_time:.2f}s | "
-                f"overhead={epoch_total_time - epoch_batch_time:.2f}s"
+                f"Train time: total={train_time:.2f}s | "
             )
             # ======================
 
@@ -288,12 +276,12 @@ def train(args):
                 with open(
                     f"containers/{args.container}/times/{slice_hash}_{epoch}.time", "w"
                 ) as f:
-                    f.write(f"{cumulative_train_time + elapsed_time}\n")
+                    f.write(f"{train_time + elapsed_time}\n")
 
         print(f"DEBUG: samples={epoch_samples}, batches={epoch_batches}")
         torch.save(model.state_dict(), final_ckpt)
         with open(final_time, "w") as f:
-            f.write(f"{cumulative_train_time + elapsed_time}\n")
+            f.write(f"{train_time + elapsed_time}\n")
 
         if sl == args.slices - 1:
             shard_link = f"containers/{args.container}/cache/shard-{args.shard}:{args.label}.pt"
@@ -305,8 +293,7 @@ def train(args):
             if os.path.exists(time_link) or os.path.islink(time_link):
                 os.remove(time_link)
             os.symlink(f"{slice_hash}.time", time_link)
-    training_time = cumulative_train_time - cumulative_overhead_time
-    print(f"[Shard {args.shard}][Label {args.label}] Training time (total - overhead) = {training_time:.2f}s")
+    print(f"[Shard {args.shard}][Label {args.label}] Training time: {train_time + elapsed_time:.2f}s")
 
 @torch.no_grad()
 def test(args):
