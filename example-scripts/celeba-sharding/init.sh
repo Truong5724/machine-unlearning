@@ -1,68 +1,71 @@
-#!/bin/bash
-# init_optimized.sh - Khởi tạo SISA container cho CelebA với HDF5
+#!/usr/bin/env bash
+# init.sh - Initialize CelebA multitask SISA container
 
-set -eou pipefail
+set -euo pipefail
 IFS=$'\n\t'
 
-shards=$1
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "${ROOT_DIR}"
+PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
 
-echo "======================================================================"
-echo "KHỞI TẠO SISA CONTAINER CHO CELEBA"
-echo "======================================================================"
-echo "Số shards: ${shards}"
-echo ""
-
-# Kiểm tra datasetfile tồn tại
-if [[ ! -f "datasets/celebA/datasetfile" ]]; then
-    echo "❌ KHÔNG TÌM THẤY datasets/celebA/datasetfile"
-    echo "   Hãy chạy prepare_data.py trước!"
-    echo ""
-    echo "   cd datasets/celebA"
-    echo "   python prepare_data.py --attribute Smiling --batch_size 1000"
+if [[ $# -lt 1 ]]; then
+    echo "Usage: $0 <number_of_shards> [scenario_label ...]"
+    echo "Example: $0 5 0 100 500"
     exit 1
 fi
 
-# Kiểm tra HDF5 files
-if [[ ! -f "datasets/celebA/celeba_train.h5" ]]; then
-    echo "❌ KHÔNG TÌM THẤY datasets/celebA/celeba_train.h5"
-    echo "   Hãy chạy prepare_data.py trước!"
+shards="$1"
+shift || true
+
+labels=("$@")
+if [[ ${#labels[@]} -eq 0 ]]; then
+    labels=(0 100 500)
+fi
+
+echo "======================================================================"
+echo "KHỞI TẠO CELEBA MULTITASK CONTAINER"
+echo "======================================================================"
+echo "Shards: ${shards}"
+echo "Scenarios: ${labels[*]}"
+echo ""
+
+if [[ ! -f "datasets/celebA/datasetfile_multitask" ]]; then
+    echo "❌ Missing datasetfile_multitask"
+    echo "   Run: python datasets/celebA/prepare_data_multitask.py"
     exit 1
 fi
 
-echo "✅ Dataset files OK"
-echo ""
-
-# Tạo container structure
-if [[ ! -d "containers/celeba" ]] ; then
-    echo "📁 Tạo thư mục container..."
-    mkdir -p "containers/celeba"
-    mkdir -p "containers/celeba/cache"
-    mkdir -p "containers/celeba/times"
-    mkdir -p "containers/celeba/outputs"
-    mkdir -p "containers/celeba/shards"
-    echo 0 > "containers/celeba/times/null.time"
-    echo "✅ Đã tạo container structure"
-else
-    echo "✅ Container đã tồn tại"
+if [[ ! -f "datasets/celebA/celeba_train.h5" || ! -f "datasets/celebA/celeba_test.h5" ]]; then
+    echo "❌ Missing CelebA HDF5 files"
+    echo "   Run: python datasets/celebA/prepare_data_multitask.py"
+    exit 1
 fi
 
-echo ""
-echo "🔄 Chia data thành ${shards} shards..."
-python distribution.py --shards "${shards}" --distribution uniform \
+mkdir -p "containers/celeba/cache" "containers/celeba/times" "containers/celeba/outputs"
+
+echo "🔄 Creating shard partition..."
+python distribution.py \
+    --shards "${shards}" \
+    --distribution uniform \
     --container "celeba" \
-    --dataset datasets/celebA/datasetfile \
+    --dataset "datasets/celebA/datasetfile_multitask" \
     --label 0
 
-echo "✅ Đã tạo ${shards} shards"
-echo ""
+echo "✅ Created ${shards} shards"
 
-# # Tạo unlearning request scenarios
-# echo "🔄 Tạo 15 unlearning request scenarios..."
-# for j in {1..15}; do
-#     r=$((${j}*${shards}/5))
-#     echo "  Scenario ${j}/15: ${r} requests"
-#     python distribution.py --requests "${r}" --distribution uniform \
-#         --container "celeba" \
-#         --dataset datasets/celebA/datasetfile \
-#         --label "${r}"
-# done
+echo ""
+echo "🔄 Creating request files..."
+for req in "${labels[@]}"; do
+    "${PYTHON_BIN}" distribution.py \
+        --requests "${req}" \
+        --distribution uniform \
+        --container "celeba" \
+        --dataset "datasets/celebA/datasetfile_multitask" \
+        --label "${req}"
+    echo "   requestfile:${req}.npy"
+done
+
+echo ""
+echo "✅ Init completed successfully!"
+echo "Next step: bash example-scripts/celeba-sharding/train.sh ${shards}"
+echo "======================================================================"

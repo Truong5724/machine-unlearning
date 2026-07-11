@@ -1,192 +1,107 @@
-# #!/bin/bash
-# # data_optimized.sh - Tổng hợp kết quả và tạo report
+#!/usr/bin/env bash
+# data.sh - Aggregate CelebA multitask predictions into a report
 
-# set -eou pipefail
-# IFS=$'\n\t'
-
-# shards=$1
-
-# echo "======================================================================"
-# echo "DATA AGGREGATION - SISA RESULTS"
-# echo "======================================================================"
-# echo "Số shards: ${shards}"
-# echo ""
-
-# # Tạo CSV file
-# REPORT_FILE="celeba-report.csv"
-
-# if [[ ! -f ${REPORT_FILE} ]]; then
-#     echo "📄 Tạo file report..."
-#     echo "nb_shards,nb_requests,accuracy,retraining_time" > ${REPORT_FILE}
-#     echo "✅ Đã tạo ${REPORT_FILE}"
-# else
-#     echo "⚠️  File ${REPORT_FILE} đã tồn tại"
-#     echo "   Backup file cũ..."
-#     cp ${REPORT_FILE} "${REPORT_FILE}.backup.$(date +%s)"
-#     echo "nb_shards,nb_requests,accuracy,retraining_time" > ${REPORT_FILE}
-# fi
-
-# echo ""
-# echo "🔄 Aggregating predictions và tính metrics..."
-# echo ""
-
-# for j in {0..15}; do
-#     r=$((${j}*${shards}/5))
-    
-#     echo "--------------------------------------------------------------------"
-#     echo "Scenario $((${j}+1))/16: ${r} requests"
-#     echo "--------------------------------------------------------------------"
-    
-#     # Kiểm tra outputs tồn tại
-#     missing=0
-#     for i in $(seq 0 "$((${shards}-1))"); do
-#         output_file="containers/celeba/outputs/shard-${i}:${r}.npy"
-#         if [[ ! -f "${output_file}" ]]; then
-#             echo "❌ Thiếu output: ${output_file}"
-#             missing=1
-#         fi
-#     done
-    
-#     if [[ ${missing} -eq 1 ]]; then
-#         echo "⚠️  Thiếu outputs, skip scenario này"
-#         continue
-#     fi
-    
-#     # Aggregate predictions
-#     echo "🔄 Aggregating ${shards} shards..."
-#     acc=$(python aggregation.py \
-#         --strategy uniform \
-#         --container "celeba" \
-#         --shards "${shards}" \
-#         --dataset datasets/celebA/datasetfile \
-#         --label "${r}")
-    
-#     echo "✅ Accuracy: ${acc}"
-    
-#     # Tính retraining time
-#     echo "🔄 Tính retraining time..."
-#     cat containers/celeba/times/shard-*:"${r}".time > "containers/celeba/times/times.tmp"
-#     time=$(python time_stats.py --container "celeba" | awk -F ',' '{print $1}')
-    
-#     echo "✅ Retraining time: ${time}s"
-    
-#     # Lưu vào CSV
-#     echo "${shards},${r},${acc},${time}" >> ${REPORT_FILE}
-    
-#     echo ""
-# done
-
-# echo "======================================================================"
-# echo "✅ DATA AGGREGATION HOÀN TẤT!"
-# echo "======================================================================"
-# echo ""
-# echo "📊 KẾT QUẢ:"
-# echo "--------------------------------------------------------------------"
-# cat ${REPORT_FILE}
-# echo "--------------------------------------------------------------------"
-# echo ""
-# echo "File đã lưu: ${REPORT_FILE}"
-# echo ""
-# echo "📈 PHÂN TÍCH KẾT QUẢ:"
-# echo ""
-
-# # Hiển thị summary statistics
-# echo "Summary Statistics:"
-# echo "-------------------"
-
-# # Accuracy range
-# acc_values=$(tail -n +2 ${REPORT_FILE} | awk -F ',' '{print $3}')
-# if [[ ! -z "${acc_values}" ]]; then
-#     min_acc=$(echo "${acc_values}" | sort -n | head -1)
-#     max_acc=$(echo "${acc_values}" | sort -n | tail -1)
-#     echo "Accuracy range: ${min_acc} - ${max_acc}"
-# fi
-
-# # Time range
-# time_values=$(tail -n +2 ${REPORT_FILE} | awk -F ',' '{print $4}')
-# if [[ ! -z "${time_values}" ]]; then
-#     min_time=$(echo "${time_values}" | sort -n | head -1)
-#     max_time=$(echo "${time_values}" | sort -n | tail -1)
-#     echo "Retraining time range: ${min_time}s - ${max_time}s"
-# fi
-
-# echo ""
-# echo "💡 Gợi ý cho khóa luận:"
-# echo "  1. Vẽ biểu đồ: accuracy vs nb_requests"
-# echo "  2. Vẽ biểu đồ: retraining_time vs nb_requests"
-# echo "  3. So sánh với baseline (retrain from scratch)"
-# echo "  4. Phân tích trade-off giữa accuracy và unlearning speed"
-# echo ""
-# echo "Để visualize kết quả:"
-# echo "  python plot_results.py --input ${REPORT_FILE}"
-# echo ""
-# echo "======================================================================"
-#!/bin/bash
-# data_optimized.sh - Aggregation (train-only mode)
-
-set -eou pipefail
+set -euo pipefail
 IFS=$'\n\t'
 
-shards=$1
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "${ROOT_DIR}"
+PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
 
-echo "======================================================================"
-echo "DATA AGGREGATION - TRAIN ONLY MODE"
-echo "======================================================================"
-echo "Số shards: ${shards}"
-echo ""
-
-REPORT_FILE="celeba-report.csv"
-
-echo "nb_shards,nb_requests,accuracy,retraining_time" > ${REPORT_FILE}
-
-r=0
-
-echo "--------------------------------------------------------------------"
-echo "Aggregating for r=${r}"
-echo "--------------------------------------------------------------------"
-
-# Check outputs
-missing=0
-for i in $(seq 0 "$((${shards}-1))"); do
-    output_file="containers/celeba/outputs/shard-${i}:${r}.npy"
-    if [[ ! -f "${output_file}" ]]; then
-        echo "❌ Thiếu output: ${output_file}"
-        missing=1
-    fi
-done
-
-if [[ ${missing} -eq 1 ]]; then
-    echo "⚠️  Thiếu outputs, hãy chạy predict trước!"
+if [[ $# -lt 1 ]]; then
+    echo "Usage: $0 <number_of_shards> [label]"
+    echo "Example: $0 5 0"
     exit 1
 fi
 
-echo "🔄 Aggregating ${shards} shards..."
+shards="$1"
+label="${2:-0}"
+REPORT_FILE="celeba_multitask_report.csv"
 
-acc=$(python aggregation.py \
-    --strategy uniform \
-    --container "celeba" \
-    --shards "${shards}" \
-    --dataset datasets/celebA/datasetfile \
-    --label "${r}" | tail -n 1)
+if [[ ! -f "datasets/celebA/datasetfile_multitask" ]]; then
+    echo "❌ Missing datasetfile_multitask"
+    exit 1
+fi
 
-echo "✅ Accuracy: ${acc}"
+for i in $(seq 0 $((shards - 1))); do
+    output_file="containers/celeba/outputs/shard-${i}:${label}.npy"
+    if [[ ! -f "${output_file}" ]]; then
+        echo "❌ Missing prediction output: ${output_file}"
+        echo "   Run predict.sh first."
+        exit 1
+    fi
+done
 
-echo "🔄 Tính training time..."
-cat containers/celeba/times/shard-*:"${r}".time > \
-    "containers/celeba/times/times.tmp"
+NUM_SHARDS="$shards" LABEL="$label" "${PYTHON_BIN}" - <<'PY'
+import csv
+import importlib
+import json
+import os
+from pathlib import Path
 
-time=$(python time_stats.py --container "celeba" | awk -F ',' '{print $1}')
+import numpy as np
 
-echo "✅ Training time: ${time}s"
+from aggregation_celebA import binary_metrics
 
-echo "${shards},${r},${acc},${time}" >> ${REPORT_FILE}
+shards = int(os.environ["NUM_SHARDS"])
+label = os.environ["LABEL"]
+
+with open("datasets/celebA/datasetfile_multitask") as f:
+    datasetfile = json.load(f)
+
+dataloader = importlib.import_module("datasets.celebA." + datasetfile["dataloader"])
+
+indices = np.arange(int(datasetfile["nb_test"]), dtype=np.int64)
+_, labels = dataloader.load(indices, category="test")
+
+stack = None
+for shard in range(shards):
+    pred_path = Path(f"containers/celeba/outputs/shard-{shard}:{label}.npy")
+    arr = np.load(pred_path)
+    if stack is None:
+        stack = np.zeros_like(arr, dtype=np.float64)
+    stack += arr
+
+stack /= max(shards, 1)
+np.save(f"containers/celeba/outputs/aggregated:{label}.npy", stack)
+
+metrics = []
+with open("celeba_multitask_report.csv", "w", newline="") as csv_file:
+    writer = csv.writer(csv_file)
+    writer.writerow(["attr_idx", "acc", "bacc", "f1", "precision", "recall", "roc_auc", "pr_auc"])
+    for attr_idx in range(stack.shape[1]):
+        y_true = np.asarray(labels[:, attr_idx], dtype=np.int64)
+        y_score = stack[:, attr_idx].astype(np.float64)
+        metric = binary_metrics(y_true, y_score, threshold=0.5)
+        metrics.append(metric)
+        writer.writerow([
+            attr_idx,
+            f"{metric['acc']:.6f}",
+            f"{metric['bacc']:.6f}",
+            f"{metric['f1']:.6f}",
+            f"{metric['precision']:.6f}",
+            f"{metric['recall']:.6f}",
+            f"{metric['roc_auc']:.6f}",
+            f"{metric['pr_auc']:.6f}",
+        ])
+
+summary = {
+    "macro_acc": float(np.mean([m["acc"] for m in metrics])),
+    "macro_bacc": float(np.mean([m["bacc"] for m in metrics])),
+    "macro_f1": float(np.mean([m["f1"] for m in metrics])),
+    "macro_precision": float(np.mean([m["precision"] for m in metrics])),
+    "macro_recall": float(np.mean([m["recall"] for m in metrics])),
+    "macro_roc_auc": float(np.mean([m["roc_auc"] for m in metrics])),
+    "macro_pr_auc": float(np.mean([m["pr_auc"] for m in metrics])),
+}
+
+print("=== CELEBA MULTITASK AGGREGATION SUMMARY ===")
+for key, value in summary.items():
+    print(f"{key}={value:.6f}")
+PY
 
 echo ""
 echo "======================================================================"
-echo "✅ DATA AGGREGATION HOÀN TẤT!"
-echo "======================================================================"
-echo ""
-cat ${REPORT_FILE}
-echo ""
-echo "File đã lưu: ${REPORT_FILE}"
+echo "✅ Data aggregation completed"
+echo "Report: ${REPORT_FILE}"
 echo "======================================================================"

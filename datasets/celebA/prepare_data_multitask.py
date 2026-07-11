@@ -44,8 +44,9 @@ def load_celeba_annotations(txt_path):
 
 def main():
     parser = argparse.ArgumentParser(description='Chuẩn bị CelebA dataset')
-    parser.add_argument('--img_dir', default='img_align_celeba', help='Thư mục chứa ảnh CelebA')
-    parser.add_argument('--anno_file', default='list_attr_celeba.txt', help='File annotation')
+    script_dir = os.path.dirname(os.path.realpath(__file__))
+    parser.add_argument('--img_dir', default=os.path.join(script_dir, 'img_align_celeba'), help='Thư mục chứa ảnh CelebA')
+    parser.add_argument('--anno_file', default=os.path.join(script_dir, 'list_attr_celeba.txt'), help='File annotation')
     parser.add_argument('--target_size', type=int, default=64)
     parser.add_argument('--batch_size', type=int, default=500)
     parser.add_argument('--train_ratio', type=float, default=0.8)
@@ -104,18 +105,18 @@ def main():
                 img_array = np.array(img).transpose(2, 0, 1)
                 images_ds[i] = img_array
 
-    save_hdf5(train_files, train_labels, 'celeba_train.h5')
-    save_hdf5(test_files, test_labels, 'celeba_test.h5')
+    save_hdf5(train_files, train_labels, os.path.join(script_dir, 'celeba_train.h5'))
+    save_hdf5(test_files, test_labels, os.path.join(script_dir, 'celeba_test.h5'))
 
     # Datasetfile
     dataset_info = {
         "nb_train": len(train_files),
         "nb_test": len(test_files),
         "input_shape": [3, args.target_size, args.target_size],
-        "dataloader": "dataloader_celeba_multitask",
+        "dataloader": "dataloader_multitask",
         "num_attributes": 27,
     }
-    with open("datasetfile_celeba", "w") as f:
+    with open(os.path.join(script_dir, 'datasetfile_multitask'), "w") as f:
         json.dump(dataset_info, f, indent=4)
 
     print("\n✅ HOÀN TẤT PREPARE CELEBA!")

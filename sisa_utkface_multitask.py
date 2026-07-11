@@ -164,6 +164,7 @@ def train(args):
     loaded = False
     elapsed_time = 0.0
 
+    total_time = 0.0
     for sl in tqdm(range(args.slices), desc=f"Shard {args.shard}"):
         slice_hash = getShardHash(
             args.container, args.label, args.shard, until=(sl + 1) * slice_size
@@ -283,6 +284,9 @@ def train(args):
         with open(final_time, "w") as f:
             f.write(f"{train_time + elapsed_time}\n")
 
+        total_time += train_time
+        print(f"[Shard {args.shard}][Slice {sl}] Training time: {train_time:.2f}s")
+
         if sl == args.slices - 1:
             shard_link = f"containers/{args.container}/cache/shard-{args.shard}:{args.label}.pt"
             if os.path.exists(shard_link) or os.path.islink(shard_link):
@@ -293,7 +297,7 @@ def train(args):
             if os.path.exists(time_link) or os.path.islink(time_link):
                 os.remove(time_link)
             os.symlink(f"{slice_hash}.time", time_link)
-    print(f"[Shard {args.shard}][Label {args.label}] Training time: {train_time + elapsed_time:.2f}s")
+    print(f"[Shard {args.shard}][Label {args.label}] Total training time: {total_time:.2f}s")
 
 @torch.no_grad()
 def test(args):

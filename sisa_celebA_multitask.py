@@ -12,7 +12,8 @@ from torch.optim import Adam, SGD
 from torch.nn.functional import one_hot, softmax
 from tqdm import tqdm
 
-from architectures.celeba_multitask import CelebAMultiTaskModel
+from architectures.celebA_multitask import CelebAMultiTaskModel
+from aggregation_celebA import binary_metrics
 from sharded import getShardHash, sizeOfShard
 
 NUM_ATTRIBUTES = 27
@@ -63,8 +64,9 @@ def multitask_loss(outputs, labels, loss_fns):
     """Loss cho 27 attributes"""
     total = 0.0
     for i in range(NUM_ATTRIBUTES):
-        y = torch.from_numpy(labels[:, i]).to(outputs[i].device).long()
-        total += loss_fns[i](outputs[i], y)
+        key = TASKS[i]
+        y = torch.from_numpy(labels[:, i]).to(outputs[key].device).long()
+        total += loss_fns[i](outputs[key], y)
     return total
 
 def train(args):
@@ -191,13 +193,83 @@ def train(args):
             os.symlink(f"{slice_hash}.time", time_link)
 
 
+@torch.no_grad()
+def test(args):
+    datasetfile, dataloader = load_dataset_config(args.dataset)
+    input_shape = tuple(datasetfile["input_shape"])
+
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    model = CelebAMultiTaskModel(
+        input_shape=input_shape,
+        dropout_rate=args.dropout_rate,
+        num_attributes=NUM_ATTRIBUTES,
+    ).to(device)
+
+    load_path = f"containers/{args.container}/cache/shard-{args.shard}:{args.label}.pt"
+    if not os.path.exists(load_path):
+        raise FileNotFoundError(f"Checkpoint not found: {load_path}")
+
+    model.load_state_dict(torch.load(load_path, map_location=device))
+    model.eval()
+
+    test_indices = np.arange(datasetfile["nb_test"], dtype=np.int64)
+    _, test_labels = dataloader.load(test_indices, category="test")
+
+    scores = np.zeros((len(test_indices), NUM_ATTRIBUTES), dtype=np.float32)
+
+    for start in range(0, len(test_indices), args.batch_size):
+        batch_ids = test_indices[start : start + args.batch_size]
+        images, _ = dataloader.load(batch_ids, category="test")
+        x = torch.from_numpy(images).to(device)
+
+        outputs = model(x)
+        batch_scores = []
+        for i in range(NUM_ATTRIBUTES):
+            logits = outputs[TASKS[i]]
+            probs = torch.softmax(logits, dim=1)[:, 1]
+            batch_scores.append(probs.cpu().numpy())
+
+        batch_scores = np.column_stack(batch_scores).astype(np.float32)
+        scores[start : start + len(batch_ids)] = batch_scores
+
+    np.save(
+        f"containers/{args.container}/outputs/shard-{args.shard}:{args.label}.npy",
+        scores,
+    )
+
+    print("=" * 70)
+    print(f"Shard {args.shard} test metrics (CelebA multitask)")
+    print("=" * 70)
+
+    metrics_by_attr = []
+    for i in range(NUM_ATTRIBUTES):
+        attr_true = np.asarray(test_labels[:, i], dtype=np.int64)
+        attr_score = scores[:, i]
+        metric = binary_metrics(attr_true, attr_score)
+        metrics_by_attr.append(metric)
+
+    macro_acc = float(np.mean([m["acc"] for m in metrics_by_attr]))
+    macro_bacc = float(np.mean([m["bacc"] for m in metrics_by_attr]))
+    macro_f1 = float(np.mean([m["f1"] for m in metrics_by_attr]))
+    macro_pr_auc = float(np.mean([m["pr_auc"] for m in metrics_by_attr]))
+    macro_roc_auc = float(np.mean([m["roc_auc"] for m in metrics_by_attr]))
+
+    print(
+        f"Macro-ACC       : {macro_acc * 100:.2f}%\n"
+        f"Macro-BACC      : {macro_bacc * 100:.2f}%\n"
+        f"Macro-F1        : {macro_f1 * 100:.2f}%\n"
+        f"Macro-PR-AUC    : {macro_pr_auc * 100:.2f}%\n"
+        f"Macro-ROC-AUC   : {macro_roc_auc * 100:.2f}%"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--train", action="store_true")
     parser.add_argument("--test", action="store_true")
 
     parser.add_argument("--container", required=True)
-    parser.add_argument("--dataset", default="datasets/CelebA/datasetfile")
+    parser.add_argument("--dataset", default="datasets/celebA/datasetfile_multitask")
     parser.add_argument("--shard", type=int, required=True)
     parser.add_argument("--label", default="0")
     parser.add_argument("--slices", type=int, default=1)
@@ -217,8 +289,8 @@ def main():
 
     if args.train:
         train(args)
-    # if args.test:
-    #     test(args)   # bạn có thể thêm sau
+    if args.test:
+        test(args)
 
 
 if __name__ == "__main__":
