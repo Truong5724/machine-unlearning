@@ -269,7 +269,7 @@ def main():
     parser.add_argument("--test", action="store_true")
 
     parser.add_argument("--container", required=True)
-    parser.add_argument("--dataset", default="datasets/celebA/datasetfile_multitask")
+    parser.add_argument("--dataset", default="datasets/celebA/datasetfile_celeba")
     parser.add_argument("--shard", type=int, required=True)
     parser.add_argument("--label", default="0")
     parser.add_argument("--slices", type=int, default=1)

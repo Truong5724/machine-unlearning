@@ -1,71 +1,57 @@
-#!/usr/bin/env bash
-# init.sh - Initialize CelebA multitask SISA container
+#!/bin/bash
+# init_celeba.sh
 
-set -euo pipefail
+set -eou pipefail
 IFS=$'\n\t'
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "${ROOT_DIR}"
-PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
+shards=$1
+samples=${2:-30000}
 
-if [[ $# -lt 1 ]]; then
-    echo "Usage: $0 <number_of_shards> [scenario_label ...]"
-    echo "Example: $0 5 0 100 500"
+echo "================================================================="
+echo "🚀 Init SISA CelebA - ${shards} shards | ${samples} samples"
+echo "================================================================="
+
+DATASET_FILE="datasets/celebA/datasetfile_celeba"
+
+if [[ ! -f "$DATASET_FILE" ]]; then
+    echo "❌ Không tìm thấy $DATASET_FILE"
+    ls -l datasets/celebA/
     exit 1
 fi
 
-shards="$1"
-shift || true
+echo "📄 Sử dụng: $DATASET_FILE"
 
-labels=("$@")
-if [[ ${#labels[@]} -eq 0 ]]; then
-    labels=(0 100 500)
-fi
+mkdir -p containers/celeba/{cache,times,outputs}
 
-echo "======================================================================"
-echo "KHỞI TẠO CELEBA MULTITASK CONTAINER"
-echo "======================================================================"
-echo "Shards: ${shards}"
-echo "Scenarios: ${labels[*]}"
-echo ""
+# Partition
+echo "📊 Running partition ${samples} samples..."
+python partition_celebA.py \
+    --container celeba \
+    --dataset "$DATASET_FILE" \
+    --slices_per_shard "${shards}" \
+    --samples "${samples}"
 
-if [[ ! -f "datasets/celebA/datasetfile_multitask" ]]; then
-    echo "❌ Missing datasetfile_multitask"
-    echo "   Run: python datasets/celebA/prepare_data_multitask.py"
-    exit 1
-fi
-
-if [[ ! -f "datasets/celebA/celeba_train.h5" || ! -f "datasets/celebA/celeba_test.h5" ]]; then
-    echo "❌ Missing CelebA HDF5 files"
-    echo "   Run: python datasets/celebA/prepare_data_multitask.py"
-    exit 1
-fi
-
-mkdir -p "containers/celeba/cache" "containers/celeba/times" "containers/celeba/outputs"
-
-echo "🔄 Creating shard partition..."
-python distribution_safe.py \
-    --shards "${shards}" \
-    --distribution uniform \
-    --container "celeba" \
-    --dataset "datasets/celebA/datasetfile_multitask" \
-    --label 0
-
-echo "✅ Created ${shards} shards"
-
-echo ""
-echo "🔄 Creating request files..."
-for req in "${labels[@]}"; do
-    "${PYTHON_BIN}" distribution.py \
-        --requests "${req}" \
-        --distribution uniform \
-        --container "celeba" \
-        --dataset "datasets/celebA/datasetfile_multitask" \
-        --label "${req}"
-    echo "   requestfile:${req}.npy"
+# Request files
+for req in 0 100 500; do
+    if [ "$req" -eq 0 ]; then
+        python - <<EOF
+import numpy as np
+shards_arr = np.load("containers/celeba/splitfile.npy", allow_pickle=True)
+requests = [np.array([], dtype=np.int64) for _ in range(len(shards_arr))]
+np.save("containers/celeba/requestfile:0.npy", np.array(requests, dtype=object))
+print("✅ Created requestfile:0")
+EOF
+    else
+        python distribution_safe.py \
+            --requests "${req}" \
+            --distribution uniform \
+            --container celeba \
+            --dataset "$DATASET_FILE" \
+            --label "${req}"
+    fi
 done
 
-echo ""
-echo "✅ Init completed successfully!"
-echo "Next step: bash example-scripts/celeba-sharding/train.sh ${shards}"
-echo "======================================================================"
+echo "================================================================="
+echo "✅ Init CelebA completed!"
+echo "Next: ./train_celeba.sh ${shards}"
+echo "================================================================="
