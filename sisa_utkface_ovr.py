@@ -187,6 +187,7 @@ def train(args):
     loaded = False
     elapsed_time = 0.0
     cumulative_train_time = 0.0
+    cumulative_batch_time = 0.0
 
     for slice_id in tqdm(range(len(slice_plan)), desc=f"Shard {args.shard}-{task}"):
         current_indices = np.concatenate(slice_plan[: slice_id + 1])
@@ -244,6 +245,7 @@ def train(args):
             correct = 0
             running_loss = 0.0
             epoch_start = time()
+            epoch_batch_time = 0.0 
 
             for batch_ids in iter_batches(
                 current_indices, args.batch_size, shuffle=True
@@ -251,13 +253,16 @@ def train(args):
                 images, y_dict = dataloader.load_ovr(batch_ids, category="train")
                 x = torch.from_numpy(images).to(device)
                 y = torch.from_numpy(y_dict[task]).float().to(device)  # (B,)
-
+                batch_start = time() 
+                
                 logits = model.forward_task(x, task)  # (B,)
                 loss = loss_fn(logits, y)
 
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+
+                epoch_batch_time += time() - batch_start
 
                 running_loss += loss.item()
                 probs = torch.sigmoid(logits)
@@ -266,6 +271,7 @@ def train(args):
                 total += y.size(0)
 
             cumulative_train_time += time() - epoch_start
+            cumulative_batch_time += epoch_batch_time
             acc = 100.0 * correct / max(total, 1)
 
             print(
@@ -285,11 +291,11 @@ def train(args):
                 )
                 torch.save(model.state_dict(), tmp_ckpt)
                 with open(tmp_time, "w") as f:
-                    f.write(f"{cumulative_train_time + elapsed_time}\n")
+                    f.write(f"{cumulative_batch_time + elapsed_time}\n")
 
         torch.save(model.state_dict(), ckpt_final)
         with open(time_final, "w") as f:
-            f.write(f"{cumulative_train_time + elapsed_time}\n")
+            f.write(f"{cumulative_batch_time + elapsed_time}\n")
 
         if slice_id == len(slice_plan) - 1:
             shard_link = f"containers/{args.container}/cache/shard-{args.shard}:{args.label}.pt"
