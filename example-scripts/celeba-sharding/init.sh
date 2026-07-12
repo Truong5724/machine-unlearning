@@ -11,7 +11,7 @@ echo "================================================================="
 echo "🚀 Init SISA CelebA - ${shards} shards | ${samples} samples"
 echo "================================================================="
 
-DATASET_FILE="datasets/celebA/datasetfile_multitask"
+DATASET_FILE="datasets/celebA/datasetfile_celeba"
 
 if [[ ! -f "$DATASET_FILE" ]]; then
     echo "❌ Không tìm thấy $DATASET_FILE"

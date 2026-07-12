@@ -7,7 +7,7 @@ IFS=$'\n\t'
 shards=$1
 label=${2:-0}
 container=${3:-celeba}
-dataset=${4:-datasets/celebA/datasetfile_multitask}
+dataset=${4:-datasets/celebA/datasetfile_celeba}
 batch_size=${5:-128}
 
 echo "======================================================================"

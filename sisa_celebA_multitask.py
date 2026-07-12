@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 
 from architectures.celebA_multitask import CelebAMultiTaskModel
-from aggregation_celebA_multitask import binary_metrics
+from aggregation_multitask_celebA import binary_metrics
 from sharded import getShardHash, sizeOfShard
 
 

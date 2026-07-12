@@ -15,7 +15,7 @@ label=$2
 
 
 CONTAINER="celeba"
-DATASET="datasets/celebA/datasetfile_multitask"
+DATASET="datasets/celebA/datasetfile_celeba"
 
 
 echo "=============================================================="
