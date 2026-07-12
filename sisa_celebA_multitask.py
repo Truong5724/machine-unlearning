@@ -437,7 +437,7 @@ def train(args):
 
 
 
-            for images,labels in fetch_celeba_batch(
+            for images, labels in fetch_celeba_batch(
                 args.container,
                 args.label,
                 args.shard,
@@ -446,46 +446,50 @@ def train(args):
                 until=until
             ):
 
-
-
-                x=torch.from_numpy(
+                x = torch.from_numpy(
                     images
                 ).float().to(device)
 
 
+    # ==============================
+    # Measure ONLY forward + backward
+    # ==============================
 
-                t0=time()
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+
+                fb_start = time()
 
 
-
-                outputs=model(x)
-
+                outputs = model(x)
 
 
-                loss=multitask_loss(
+                loss = multitask_loss(
                     outputs,
                     labels,
                     loss_fns
                 )
 
 
-
                 optimizer.zero_grad()
 
                 loss.backward()
 
-                optimizer.step()
 
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
 
 
                 train_time += (
-                    time()-t0
+                    time() - fb_start
                 )
 
 
-                running_loss += (
-                    loss.item()
-                )
+                # optimizer update không tính thời gian
+                optimizer.step()
+
+
+                running_loss += loss.item()
 
 
 
