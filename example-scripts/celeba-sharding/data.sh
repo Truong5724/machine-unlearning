@@ -56,7 +56,7 @@ echo "✅ All outputs exist."
 echo "📈 Computing test set metrics..."
 
 
-test_metrics=$(python aggregation_celebA_multitask.py \
+test_metrics=$(python aggregation_multitask_celebA.py \
   --strategy uniform \
   --container ${CONTAINER} \
   --shards ${shards} \

@@ -670,10 +670,11 @@ def main():
 
         print(
             f"{TASKS[i]:8s} | "
-            f"THR={metric['threshold']:.3f} "
             f"ACC={metric['acc']*100:6.2f}% "
             f"BACC={metric['bacc']*100:6.2f}% "
             f"F1={metric['f1']*100:6.2f}% "
+            f"PREC={metric['precision']*100:6.2f}% "
+            f"REC={metric['recall']*100:6.2f}% "
             f"ROC={metric['roc_auc']*100:6.2f}% "
             f"PR={metric['pr_auc']*100:6.2f}%"
         )
