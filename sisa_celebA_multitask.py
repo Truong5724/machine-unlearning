@@ -9,289 +9,882 @@ import numpy as np
 import torch
 from torch.nn import CrossEntropyLoss
 from torch.optim import Adam, SGD
-from torch.nn.functional import one_hot, softmax
 from tqdm import tqdm
 
+
 from architectures.celebA_multitask import CelebAMultiTaskModel
-from aggregation_celebA import binary_metrics
+from aggregation_celebA_multitask import binary_metrics
 from sharded import getShardHash, sizeOfShard
 
-NUM_ATTRIBUTES = 27
-TASKS = [f"attr_{i}" for i in range(NUM_ATTRIBUTES)]
 
+NUM_ATTRIBUTES = 27
+TASKS = [
+    f"attr_{i}"
+    for i in range(NUM_ATTRIBUTES)
+]
+
+
+# ==========================================================
+# LOAD DATASET
+# ==========================================================
 
 def load_dataset_config(datasetfile_path):
-    with open(datasetfile_path, "r") as f:
-        datasetfile = json.loads(f.read())
-    module_name = ".".join(
-        datasetfile_path.replace("\\", "/").split("/")[:-1] + [datasetfile["dataloader"]]
-    )
-    dataloader = importlib.import_module(module_name)
-    return datasetfile, dataloader
 
+    with open(datasetfile_path,"r") as f:
+        datasetfile=json.load(f)
+
+
+    module_name=".".join(
+        datasetfile_path.replace("\\","/")
+        .split("/")[:-1]
+        +
+        [
+            datasetfile["dataloader"]
+        ]
+    )
+
+
+    dataloader=importlib.import_module(
+        module_name
+    )
+
+
+    return datasetfile,dataloader
+
+
+
+# ==========================================================
+# FETCH TRAIN BATCH
+# ==========================================================
 
 def fetch_celeba_batch(
-    container, label, shard, batch_size, dataset, offset=0, until=None
+        container,
+        label,
+        shard,
+        batch_size,
+        dataset,
+        offset=0,
+        until=None
 ):
-    shards = np.load(f"containers/{container}/splitfile.npy", allow_pickle=True)
-    requests = np.load(f"containers/{container}/requestfile:{label}.npy", allow_pickle=True)
 
-    datasetfile, dataloader = load_dataset_config(dataset)
-    if until is None or until > shards[shard].shape[0]:
-        until = shards[shard].shape[0]
 
-    limit = offset
-    while limit <= until - batch_size:
-        limit += batch_size
-        indices = np.setdiff1d(shards[shard][limit - batch_size : limit], requests[shard])
-        if indices.size > 0:
-            yield dataloader.load(indices, category="train")
+    shards=np.load(
+        f"containers/{container}/splitfile.npy",
+        allow_pickle=True
+    )
+
+
+    requests=np.load(
+        f"containers/{container}/requestfile:{label}.npy",
+        allow_pickle=True
+    )
+
+
+    _,dataloader=load_dataset_config(dataset)
+
+
+    if until is None or until > len(shards[shard]):
+        until=len(shards[shard])
+
+
+    limit=offset
+
+
+    while limit <= until-batch_size:
+
+        idx_range=shards[shard][
+            limit:
+            limit+batch_size
+        ]
+
+        limit+=batch_size
+
+
+        indices=np.setdiff1d(
+            idx_range,
+            requests[shard]
+        )
+
+
+        if len(indices)>0:
+
+            yield dataloader.load(
+                indices,
+                category="train"
+            )
+
+
+
     if limit < until:
-        indices = np.setdiff1d(shards[shard][limit:until], requests[shard])
-        if indices.size > 0:
-            yield dataloader.load(indices, category="train")
+
+        indices=np.setdiff1d(
+            shards[shard][limit:until],
+            requests[shard]
+        )
 
 
-def make_optimizer(model, name, learning_rate):
-    if name == "adam":
-        return Adam(model.parameters(), lr=learning_rate)
-    if name == "sgd":
-        return SGD(model.parameters(), lr=learning_rate, momentum=0.9, weight_decay=1e-4)
-    raise ValueError("Unsupported optimizer")
+        if len(indices)>0:
+
+            yield dataloader.load(
+                indices,
+                category="train"
+            )
 
 
-def multitask_loss(outputs, labels, loss_fns):
-    """Loss cho 27 attributes"""
-    total = 0.0
+
+# ==========================================================
+# OPTIMIZER
+# ==========================================================
+
+def make_optimizer(
+        model,
+        name,
+        lr
+):
+
+    if name=="adam":
+
+        return Adam(
+            model.parameters(),
+            lr=lr
+        )
+
+
+    elif name=="sgd":
+
+        return SGD(
+            model.parameters(),
+            lr=lr,
+            momentum=0.9,
+            weight_decay=1e-4
+        )
+
+
+    raise ValueError(
+        "optimizer not supported"
+    )
+
+
+
+# ==========================================================
+# LOSS
+# ==========================================================
+
+def multitask_loss(
+        outputs,
+        labels,
+        loss_fns
+):
+
+    loss=0
+
+
     for i in range(NUM_ATTRIBUTES):
-        key = TASKS[i]
-        y = torch.from_numpy(labels[:, i]).to(outputs[key].device).long()
-        total += loss_fns[i](outputs[key], y)
-    return total
+
+        logits=outputs[
+            TASKS[i]
+        ]
+
+
+        y=torch.from_numpy(
+            labels[:,i]
+        ).long().to(
+            logits.device
+        )
+
+
+        loss += loss_fns[i](
+            logits,
+            y
+        )
+
+
+    return loss
+# ==========================================================
+# TRAIN
+# ==========================================================
 
 def train(args):
-    datasetfile, dataloader = load_dataset_config(args.dataset)
-    input_shape = tuple(datasetfile["input_shape"])
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    model = CelebAMultiTaskModel(
-        input_shape=input_shape, 
+    datasetfile, dataloader = load_dataset_config(
+        args.dataset
+    )
+
+
+    input_shape = tuple(
+        datasetfile["input_shape"]
+    )
+
+
+    device=torch.device(
+        "cuda:0"
+        if torch.cuda.is_available()
+        else "cpu"
+    )
+
+
+    model=CelebAMultiTaskModel(
+        input_shape=input_shape,
         dropout_rate=args.dropout_rate,
         num_attributes=NUM_ATTRIBUTES
     ).to(device)
 
-    shard_size = sizeOfShard(args.container, args.shard)
-    if shard_size == 0:
-        print(f"Shard {args.shard} is empty.")
+
+
+    shard_size=sizeOfShard(
+        args.container,
+        args.shard
+    )
+
+
+    if shard_size==0:
+        print(
+            f"Shard {args.shard} empty"
+        )
         return
 
-    slice_size = max(1, shard_size // args.slices)
-    avg_epochs_per_slice = 2 * args.slices / (args.slices + 1) * args.epochs / args.slices
 
-    loss_fns = [CrossEntropyLoss() for _ in range(NUM_ATTRIBUTES)]
 
-    optimizer = make_optimizer(model, args.optimizer, args.learning_rate)
+    slice_size=max(
+        1,
+        shard_size//args.slices
+    )
 
-    loaded = False
-    elapsed_time = 0.0
 
-    for sl in tqdm(range(args.slices), desc=f"Shard {args.shard}"):
-        slice_hash = getShardHash(
-            args.container, args.label, args.shard, until=(sl + 1) * slice_size
+    avg_epochs_per_slice = (
+        2*args.slices
+        /
+        (args.slices+1)
+        *
+        args.epochs
+        /
+        args.slices
+    )
+
+
+
+    loss_fns=[
+        CrossEntropyLoss()
+        for _ in range(NUM_ATTRIBUTES)
+    ]
+
+
+    optimizer=make_optimizer(
+        model,
+        args.optimizer,
+        args.learning_rate
+    )
+
+
+    loaded=False
+    elapsed_time=0.0
+
+
+
+    for sl in tqdm(
+        range(args.slices),
+        desc=f"Shard {args.shard}"
+    ):
+
+
+
+        slice_hash=getShardHash(
+            args.container,
+            args.label,
+            args.shard,
+            until=(sl+1)*slice_size
         )
-        final_ckpt = f"containers/{args.container}/cache/{slice_hash}.pt"
-        final_time = f"containers/{args.container}/times/{slice_hash}.time"
+
+
+
+        final_ckpt=(
+            f"containers/{args.container}/cache/"
+            f"{slice_hash}.pt"
+        )
+
+
+        final_time=(
+            f"containers/{args.container}/times/"
+            f"{slice_hash}.time"
+        )
+
+
 
         if os.path.exists(final_ckpt):
-            if sl == args.slices - 1:
-                shard_link = f"containers/{args.container}/cache/shard-{args.shard}:{args.label}.pt"
-                if os.path.exists(shard_link) or os.path.islink(shard_link):
-                    os.remove(shard_link)
-                os.symlink(f"{slice_hash}.pt", shard_link)
+
+            if sl==args.slices-1:
+
+                link=(
+                    f"containers/{args.container}/cache/"
+                    f"shard-{args.shard}:{args.label}.pt"
+                )
+
+
+                if os.path.exists(link) or os.path.islink(link):
+                    os.remove(link)
+
+
+                os.symlink(
+                    f"{slice_hash}.pt",
+                    link
+                )
+
+
             continue
 
-        start_epoch = 0
-        slice_epochs = int((sl + 1) * avg_epochs_per_slice) - int(sl * avg_epochs_per_slice)
+
+
+
+        start_epoch=0
+
+
+
+        slice_epochs=(
+            int((sl+1)*avg_epochs_per_slice)
+            -
+            int(sl*avg_epochs_per_slice)
+        )
+
+
 
         if not loaded:
-            recovery_list = glob(f"containers/{args.container}/cache/{slice_hash}_*.pt")
-            if recovery_list:
-                model.load_state_dict(torch.load(recovery_list[0], map_location=device))
-                start_epoch = int(recovery_list[0].split("_")[-1].split(".")[0])
-                time_path = f"containers/{args.container}/times/{slice_hash}_{start_epoch}.time"
-                if os.path.exists(time_path):
-                    with open(time_path, "r") as f:
-                        elapsed_time = float(f.read().strip())
-            elif sl > 0:
-                prev_hash = getShardHash(
-                    args.container, args.label, args.shard, until=sl * slice_size
+
+
+            recovery=glob(
+                f"containers/{args.container}/cache/"
+                f"{slice_hash}_*.pt"
+            )
+
+
+
+            if recovery:
+
+                model.load_state_dict(
+                    torch.load(
+                        recovery[0],
+                        map_location=device
+                    )
                 )
-                prev_path = f"containers/{args.container}/cache/{prev_hash}.pt"
-                if os.path.exists(prev_path):
-                    model.load_state_dict(torch.load(prev_path, map_location=device))
-            loaded = True
 
-        until = (sl + 1) * slice_size if sl < args.slices - 1 else None
 
-        train_time = 0.0
+                start_epoch=int(
+                    recovery[0]
+                    .split("_")[-1]
+                    .split(".")[0]
+                )
 
-        for epoch in tqdm(range(start_epoch, slice_epochs), leave=False):
+
+
+            elif sl>0:
+
+
+                prev_hash=getShardHash(
+                    args.container,
+                    args.label,
+                    args.shard,
+                    until=sl*slice_size
+                )
+
+
+                prev_ckpt=(
+                    f"containers/{args.container}/cache/"
+                    f"{prev_hash}.pt"
+                )
+
+
+                if os.path.exists(prev_ckpt):
+
+                    model.load_state_dict(
+                        torch.load(
+                            prev_ckpt,
+                            map_location=device
+                        )
+                    )
+
+
+
+            loaded=True
+
+
+
+
+
+        until=(
+            (sl+1)*slice_size
+            if sl < args.slices-1
+            else None
+        )
+
+
+
+        train_time=0.0
+
+
+
+        for epoch in tqdm(
+            range(
+                start_epoch,
+                slice_epochs
+            ),
+            leave=False
+        ):
+
+
             model.train()
-            running_loss = 0.0
 
-            for images, labels in fetch_celeba_batch(
+
+            running_loss=0.0
+
+
+
+            for images,labels in fetch_celeba_batch(
                 args.container,
                 args.label,
                 args.shard,
                 args.batch_size,
                 args.dataset,
-                until=until,
+                until=until
             ):
-                x = torch.from_numpy(images).to(device)
 
-                epoch_start = time()
 
-                outputs = model(x)                    # dict {attr_0: ..., attr_1: ..., ...}
-                loss = multitask_loss(outputs, labels, loss_fns)
 
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+                x=torch.from_numpy(
+                    images
+                ).float().to(device)
 
-                train_time += time() - epoch_start
 
-                running_loss += loss.item()
 
-            print(
-                f"[Shard {args.shard}][Slice {sl}][Epoch {epoch + 1}] "
-                f"loss={running_loss:.4f}"
-                f"Train time={train_time:.2f}s"
-            )
+                t0=time()
 
-            if (
-                args.chkpt_interval != -1
-                and epoch % args.chkpt_interval == args.chkpt_interval - 1
-            ):
-                torch.save(
-                    model.state_dict(),
-                    f"containers/{args.container}/cache/{slice_hash}_{epoch}.pt",
+
+
+                outputs=model(x)
+
+
+
+                loss=multitask_loss(
+                    outputs,
+                    labels,
+                    loss_fns
                 )
 
-        torch.save(model.state_dict(), final_ckpt)
-        with open(final_time, "w") as f:
-            f.write(f"{train_time + elapsed_time}\n")
 
-        if sl == args.slices - 1:
-            shard_link = f"containers/{args.container}/cache/shard-{args.shard}:{args.label}.pt"
-            if os.path.exists(shard_link) or os.path.islink(shard_link):
-                os.remove(shard_link)
-            os.symlink(f"{slice_hash}.pt", shard_link)
 
-            time_link = f"containers/{args.container}/times/shard-{args.shard}:{args.label}.time"
+                optimizer.zero_grad()
+
+                loss.backward()
+
+                optimizer.step()
+
+
+
+                train_time += (
+                    time()-t0
+                )
+
+
+                running_loss += (
+                    loss.item()
+                )
+
+
+
+
+            print(
+                f"[Shard {args.shard}] "
+                f"[Slice {sl}] "
+                f"Epoch {epoch+1} "
+                f"loss={running_loss:.4f} "
+                f"time={train_time:.2f}s"
+            )
+
+
+
+
+            if (
+                args.chkpt_interval!=-1
+                and
+                epoch % args.chkpt_interval
+                ==
+                args.chkpt_interval-1
+            ):
+
+
+                torch.save(
+                    model.state_dict(),
+                    f"containers/{args.container}/cache/"
+                    f"{slice_hash}_{epoch}.pt"
+                )
+
+
+
+
+
+        torch.save(
+            model.state_dict(),
+            final_ckpt
+        )
+
+
+        with open(final_time,"w") as f:
+
+            f.write(
+                str(train_time+elapsed_time)
+            )
+
+
+
+
+        if sl==args.slices-1:
+
+
+            link=(
+                f"containers/{args.container}/cache/"
+                f"shard-{args.shard}:{args.label}.pt"
+            )
+
+
+            if os.path.exists(link) or os.path.islink(link):
+                os.remove(link)
+
+
+            os.symlink(
+                f"{slice_hash}.pt",
+                link
+            )
+
+
+
+            time_link=(
+                f"containers/{args.container}/times/"
+                f"shard-{args.shard}:{args.label}.time"
+            )
+
+
             if os.path.exists(time_link) or os.path.islink(time_link):
                 os.remove(time_link)
-            os.symlink(f"{slice_hash}.time", time_link)
 
+
+            os.symlink(
+                f"{slice_hash}.time",
+                time_link
+            )
+# ==========================================================
+# TEST / PREDICT
+# ==========================================================
 
 @torch.no_grad()
 def test(args):
-    datasetfile, dataloader = load_dataset_config(args.dataset)
-    input_shape = tuple(datasetfile["input_shape"])
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    model = CelebAMultiTaskModel(
+    datasetfile, dataloader = load_dataset_config(
+        args.dataset
+    )
+
+
+    input_shape = tuple(
+        datasetfile["input_shape"]
+    )
+
+
+    device=torch.device(
+        "cuda:0"
+        if torch.cuda.is_available()
+        else "cpu"
+    )
+
+
+    model=CelebAMultiTaskModel(
         input_shape=input_shape,
         dropout_rate=args.dropout_rate,
-        num_attributes=NUM_ATTRIBUTES,
+        num_attributes=NUM_ATTRIBUTES
     ).to(device)
 
-    load_path = f"containers/{args.container}/cache/shard-{args.shard}:{args.label}.pt"
-    if not os.path.exists(load_path):
-        raise FileNotFoundError(f"Checkpoint not found: {load_path}")
 
-    model.load_state_dict(torch.load(load_path, map_location=device))
+
+    ckpt=(
+        f"containers/{args.container}/cache/"
+        f"shard-{args.shard}:{args.label}.pt"
+    )
+
+
+    if not os.path.exists(ckpt):
+
+        raise FileNotFoundError(
+            f"Missing checkpoint: {ckpt}"
+        )
+
+
+
+    model.load_state_dict(
+        torch.load(
+            ckpt,
+            map_location=device
+        )
+    )
+
+
     model.eval()
 
-    test_indices = np.arange(datasetfile["nb_test"], dtype=np.int64)
-    _, test_labels = dataloader.load(test_indices, category="test")
 
-    scores = np.zeros((len(test_indices), NUM_ATTRIBUTES), dtype=np.float32)
 
-    for start in range(0, len(test_indices), args.batch_size):
-        batch_ids = test_indices[start : start + args.batch_size]
-        images, _ = dataloader.load(batch_ids, category="test")
-        x = torch.from_numpy(images).to(device)
+    test_indices=np.arange(
+        datasetfile["nb_test"],
+        dtype=np.int64
+    )
 
-        outputs = model(x)
-        batch_scores = []
+
+    _,test_labels=dataloader.load(
+        test_indices,
+        category="test"
+    )
+
+
+
+    scores=np.zeros(
+        (
+            len(test_indices),
+            NUM_ATTRIBUTES
+        ),
+        dtype=np.float32
+    )
+
+
+
+    for start in range(
+        0,
+        len(test_indices),
+        args.batch_size
+    ):
+
+
+        batch_ids=test_indices[
+            start:
+            start+args.batch_size
+        ]
+
+
+
+        images,_=dataloader.load(
+            batch_ids,
+            category="test"
+        )
+
+
+
+        x=torch.from_numpy(
+            images
+        ).float().to(device)
+
+
+
+        outputs=model(x)
+
+
+
+        batch_scores=[]
+
+
         for i in range(NUM_ATTRIBUTES):
-            logits = outputs[TASKS[i]]
-            probs = torch.softmax(logits, dim=1)[:, 1]
-            batch_scores.append(probs.cpu().numpy())
 
-        batch_scores = np.column_stack(batch_scores).astype(np.float32)
-        scores[start : start + len(batch_ids)] = batch_scores
+
+            logits=outputs[
+                TASKS[i]
+            ]
+
+
+
+            # lấy xác suất class 1
+            prob=torch.softmax(
+                logits,
+                dim=1
+            )[:,1]
+
+
+
+            batch_scores.append(
+                prob.cpu().numpy()
+            )
+
+
+
+        batch_scores=np.stack(
+            batch_scores,
+            axis=1
+        )
+
+
+
+        scores[
+            start:start+len(batch_ids)
+        ]=batch_scores
+
+
+
+
+
+    output_path=(
+        f"containers/{args.container}/outputs/"
+        f"shard-{args.shard}:{args.label}.npy"
+    )
+
+
 
     np.save(
-        f"containers/{args.container}/outputs/shard-{args.shard}:{args.label}.npy",
-        scores,
+        output_path,
+        scores
     )
 
-    print("=" * 70)
-    print(f"Shard {args.shard} test metrics (CelebA multitask)")
-    print("=" * 70)
 
-    metrics_by_attr = []
-    for i in range(NUM_ATTRIBUTES):
-        attr_true = np.asarray(test_labels[:, i], dtype=np.int64)
-        attr_score = scores[:, i]
-        metric = binary_metrics(attr_true, attr_score)
-        metrics_by_attr.append(metric)
 
-    macro_acc = float(np.mean([m["acc"] for m in metrics_by_attr]))
-    macro_bacc = float(np.mean([m["bacc"] for m in metrics_by_attr]))
-    macro_f1 = float(np.mean([m["f1"] for m in metrics_by_attr]))
-    macro_pr_auc = float(np.mean([m["pr_auc"] for m in metrics_by_attr]))
-    macro_roc_auc = float(np.mean([m["roc_auc"] for m in metrics_by_attr]))
-
+    print("="*70)
     print(
-        f"Macro-ACC       : {macro_acc * 100:.2f}%\n"
-        f"Macro-BACC      : {macro_bacc * 100:.2f}%\n"
-        f"Macro-F1        : {macro_f1 * 100:.2f}%\n"
-        f"Macro-PR-AUC    : {macro_pr_auc * 100:.2f}%\n"
-        f"Macro-ROC-AUC   : {macro_roc_auc * 100:.2f}%"
+        f"Shard {args.shard} prediction saved"
     )
+    print(
+        "Output shape:",
+        scores.shape
+    )
+    print("="*70)
+
+
+
+
+# ==========================================================
+# MAIN
+# ==========================================================
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--train", action="store_true")
-    parser.add_argument("--test", action="store_true")
 
-    parser.add_argument("--container", required=True)
-    parser.add_argument("--dataset", default="datasets/celebA/datasetfile_celeba")
-    parser.add_argument("--shard", type=int, required=True)
-    parser.add_argument("--label", default="0")
-    parser.add_argument("--slices", type=int, default=1)
+    parser=argparse.ArgumentParser()
 
-    parser.add_argument("--epochs", type=int, default=20)
-    parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--learning_rate", type=float, default=1e-3)
-    parser.add_argument("--optimizer", default="adam")
-    parser.add_argument("--dropout_rate", type=float, default=0.3)
-    parser.add_argument("--chkpt_interval", type=int, default=5)
 
-    args = parser.parse_args()
 
-    os.makedirs(f"containers/{args.container}/cache", exist_ok=True)
-    os.makedirs(f"containers/{args.container}/times", exist_ok=True)
-    os.makedirs(f"containers/{args.container}/outputs", exist_ok=True)
+    parser.add_argument(
+        "--train",
+        action="store_true"
+    )
+
+
+    parser.add_argument(
+        "--test",
+        action="store_true"
+    )
+
+
+
+    parser.add_argument(
+        "--container",
+        required=True
+    )
+
+
+    parser.add_argument(
+        "--dataset",
+        default=
+        "datasets/celebA/datasetfile_multitask"
+    )
+
+
+    parser.add_argument(
+        "--shard",
+        type=int,
+        required=True
+    )
+
+
+    parser.add_argument(
+        "--label",
+        default="0"
+    )
+
+
+    parser.add_argument(
+        "--slices",
+        type=int,
+        default=1
+    )
+
+
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=20
+    )
+
+
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=128
+    )
+
+
+    parser.add_argument(
+        "--learning_rate",
+        type=float,
+        default=1e-3
+    )
+
+
+    parser.add_argument(
+        "--optimizer",
+        default="adam"
+    )
+
+
+    parser.add_argument(
+        "--dropout_rate",
+        type=float,
+        default=0.3
+    )
+
+
+    parser.add_argument(
+        "--chkpt_interval",
+        type=int,
+        default=5
+    )
+
+
+
+    args=parser.parse_args()
+
+
+
+    os.makedirs(
+        f"containers/{args.container}/cache",
+        exist_ok=True
+    )
+
+
+    os.makedirs(
+        f"containers/{args.container}/times",
+        exist_ok=True
+    )
+
+
+    os.makedirs(
+        f"containers/{args.container}/outputs",
+        exist_ok=True
+    )
+
+
 
     if args.train:
+
         train(args)
+
+
+
     if args.test:
+
         test(args)
 
 
-if __name__ == "__main__":
+
+
+
+if __name__=="__main__":
+
     main()

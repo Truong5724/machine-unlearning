@@ -1,21 +1,25 @@
 """
 CelebA Multitask Aggregation (27 attributes)
 
-Aggregate SISA shard predictions:
-    shard-{id}:{label}.npy
+Pipeline:
+    Validation:
+        Aggregate shard scores
+        Tune threshold per attribute
 
-Each output shape:
-    (num_test_samples, 27)
+    Test:
+        Apply saved thresholds
+        Compute metrics
 
 Metrics:
     ACC
-    Balanced ACC
+    BACC
     Precision
     Recall
     F1
     ROC-AUC
     PR-AUC
 """
+
 
 import argparse
 import importlib
@@ -35,35 +39,63 @@ from sklearn.metrics import (
 )
 
 
+
 NUM_ATTRIBUTES = 27
 
 TASKS = [
-    f"attr_{i}" for i in range(NUM_ATTRIBUTES)
+    f"attr_{i}"
+    for i in range(NUM_ATTRIBUTES)
 ]
 
 
+
+# ============================================================
+# LOAD DATASET
+# ============================================================
+
 def load_dataloader(dataset_path):
 
-    with open(dataset_path, "r") as f:
-        datasetfile = json.loads(f.read())
+    with open(dataset_path,"r") as f:
+        datasetfile = json.load(f)
+
 
     module_name = ".".join(
-        dataset_path.replace("\\", "/").split("/")[:-1]
-        + [datasetfile["dataloader"]]
+        dataset_path.replace("\\","/")
+        .split("/")[:-1]
+        +
+        [
+            datasetfile["dataloader"]
+        ]
     )
 
-    dataloader = importlib.import_module(module_name)
+
+    dataloader = importlib.import_module(
+        module_name
+    )
+
 
     return datasetfile, dataloader
 
 
 
-def binary_metrics(y_true, y_score):
+
+
+# ============================================================
+# METRICS
+# ============================================================
+
+def binary_metrics(
+        y_true,
+        y_score,
+        threshold=0.5
+):
+
 
     y_true = np.asarray(
         y_true,
         dtype=np.int64
     )
+
 
     y_score = np.asarray(
         y_score,
@@ -72,11 +104,17 @@ def binary_metrics(y_true, y_score):
 
 
     y_pred = (
-        y_score >= 0.5
+        y_score >= threshold
     ).astype(np.int64)
 
 
+
     result = {}
+
+
+    result["threshold"] = float(
+        threshold
+    )
 
 
     result["acc"] = float(
@@ -123,6 +161,7 @@ def binary_metrics(y_true, y_score):
 
 
     try:
+
         result["roc_auc"] = float(
             roc_auc_score(
                 y_true,
@@ -131,11 +170,13 @@ def binary_metrics(y_true, y_score):
         )
 
     except:
+
         result["roc_auc"] = 0.0
 
 
 
     try:
+
         result["pr_auc"] = float(
             average_precision_score(
                 y_true,
@@ -144,25 +185,87 @@ def binary_metrics(y_true, y_score):
         )
 
     except:
+
         result["pr_auc"] = 0.0
 
 
 
     return result
+# ============================================================
+# THRESHOLD TUNING
+# ============================================================
+
+def tune_threshold(
+        y_true,
+        y_score,
+        objective="bacc"
+):
+
+    """
+    Tìm threshold tốt nhất trên validation set
+
+    objective:
+        bacc
+        f1
+    """
 
 
+    best_threshold = 0.5
+    best_value = -1.0
+
+
+
+    thresholds = np.linspace(
+        0.05,
+        0.95,
+        91
+    )
+
+
+    for threshold in thresholds:
+
+
+        metric = binary_metrics(
+            y_true,
+            y_score,
+            threshold
+        )
+
+
+        value = metric[objective]
+
+
+        if value > best_value:
+
+            best_value = value
+
+            best_threshold = threshold
+
+
+
+    return float(best_threshold)
+
+
+
+
+# ============================================================
+# AGGREGATE SHARD OUTPUTS
+# ============================================================
 
 def aggregate_outputs(
-    container,
-    label,
-    shards,
-    strategy="uniform"
+        container,
+        label,
+        shards,
+        strategy="uniform"
 ):
+
 
     outputs = []
 
 
+
     for shard in range(shards):
+
 
         path = (
             f"containers/{container}/outputs/"
@@ -173,10 +276,11 @@ def aggregate_outputs(
         if not os.path.exists(path):
 
             print(
-                f"⚠️ Skip missing shard output: {path}"
+                f"⚠️ Missing: {path}"
             )
 
             continue
+
 
 
         outputs.append(
@@ -184,14 +288,17 @@ def aggregate_outputs(
         )
 
 
+
     if len(outputs) == 0:
 
         raise FileNotFoundError(
-            "No shard prediction files found"
+            "No shard outputs found"
         )
 
 
+
     outputs = np.asarray(outputs)
+
 
 
     print(
@@ -200,23 +307,27 @@ def aggregate_outputs(
     )
 
 
-    # ---------------------------------
-    # Uniform aggregation
-    # ---------------------------------
+
+    # ========================================================
+    # Uniform averaging
+    # ========================================================
 
     if strategy == "uniform":
 
-        final_scores = np.mean(
+
+        scores = np.mean(
             outputs,
             axis=0
         )
 
 
-    # ---------------------------------
-    # Weighted aggregation
-    # ---------------------------------
+
+    # ========================================================
+    # Weighted averaging
+    # ========================================================
 
     elif strategy == "proportional":
+
 
         split = np.load(
             f"containers/{container}/splitfile.npy",
@@ -224,34 +335,38 @@ def aggregate_outputs(
         )
 
 
-        valid_sizes = []
+        sizes = []
 
-        for i in range(shards):
+
+        for shard in range(shards):
 
             path = (
                 f"containers/{container}/outputs/"
-                f"shard-{i}:{label}.npy"
+                f"shard-{shard}:{label}.npy"
             )
+
 
             if os.path.exists(path):
 
-                valid_sizes.append(
-                    len(split[i])
+                sizes.append(
+                    len(split[shard])
                 )
 
 
+
         weights = (
-            np.asarray(valid_sizes)
+            np.asarray(sizes)
             /
-            np.sum(valid_sizes)
+            np.sum(sizes)
         )
 
 
-        final_scores = np.tensordot(
+        scores = np.tensordot(
             weights,
             outputs,
             axes=(0,0)
         )
+
 
 
     else:
@@ -261,9 +376,64 @@ def aggregate_outputs(
         )
 
 
-    return final_scores
+
+    print(
+        "Aggregated score shape:",
+        scores.shape
+    )
 
 
+    return scores
+
+
+
+
+
+# ============================================================
+# LOAD SPLIT LABELS
+# ============================================================
+
+def load_split_labels(
+        datasetfile,
+        dataloader,
+        split
+):
+
+
+    if split == "val":
+
+        n = datasetfile["nb_val"]
+
+
+    elif split == "test":
+
+        n = datasetfile["nb_test"]
+
+
+    else:
+
+        raise ValueError(
+            "Only val/test supported"
+        )
+
+
+
+    indices = np.arange(
+        n,
+        dtype=np.int64
+    )
+
+
+    _, labels = dataloader.load(
+        indices,
+        category=split
+    )
+
+
+    return labels
+# ============================================================
+# MAIN
+# ============================================================
 
 def main():
 
@@ -272,7 +442,7 @@ def main():
 
     parser.add_argument(
         "--container",
-        default="celeba_multitask"
+        default="celeba"
     )
 
 
@@ -305,6 +475,28 @@ def main():
     )
 
 
+    parser.add_argument(
+        "--objective",
+        default="bacc",
+        choices=[
+            "bacc",
+            "f1"
+        ]
+    )
+
+
+    parser.add_argument(
+        "--tune_split",
+        default="val"
+    )
+
+
+    parser.add_argument(
+        "--eval_split",
+        default="test"
+    )
+
+
     args = parser.parse_args()
 
 
@@ -314,22 +506,11 @@ def main():
     )
 
 
-    test_indices = np.arange(
-        datasetfile["nb_test"]
-    )
-
-
-    _, test_labels = dataloader.load(
-        test_indices,
-        category="test"
-    )
-
-
 
     print("="*80)
 
     print(
-        "CELEBA MULTITASK AGGREGATION"
+        "CELEBA MULTITASK SISA AGGREGATION"
     )
 
     print("="*80)
@@ -351,9 +532,18 @@ def main():
         f"Strategy  : {args.strategy}"
     )
 
+    print(
+        f"Objective : {args.objective}"
+    )
+
+
     print("-"*80)
 
 
+
+    # ========================================================
+    # Aggregate all shard predictions
+    # ========================================================
 
     scores = aggregate_outputs(
         args.container,
@@ -363,10 +553,100 @@ def main():
     )
 
 
-    print(
-        "Aggregated score shape:",
-        scores.shape
+
+    # ========================================================
+    # Tune threshold on validation
+    # ========================================================
+
+    val_labels = load_split_labels(
+        datasetfile,
+        dataloader,
+        args.tune_split
     )
+
+
+    thresholds = {}
+
+
+
+    print("\nThreshold tuning:")
+
+
+    for i in range(NUM_ATTRIBUTES):
+
+
+        threshold = tune_threshold(
+            val_labels[:,i],
+            scores[:len(val_labels),i],
+            args.objective
+        )
+
+
+        thresholds[
+            TASKS[i]
+        ] = threshold
+
+
+
+        print(
+            f"{TASKS[i]:8s} "
+            f"threshold={threshold:.3f}"
+        )
+
+
+
+    # save threshold
+
+    threshold_dir = (
+        f"containers/{args.container}/outputs/thresholds"
+    )
+
+    os.makedirs(
+        threshold_dir,
+        exist_ok=True
+    )
+
+
+    threshold_file = (
+        f"{threshold_dir}/{args.label}.json"
+    )
+
+
+    with open(
+        threshold_file,
+        "w"
+    ) as f:
+
+        json.dump(
+            thresholds,
+            f,
+            indent=4
+        )
+
+
+    print(
+        "\nSaved:",
+        threshold_file
+    )
+
+
+
+    # ========================================================
+    # Evaluate test
+    # ========================================================
+
+    test_labels = load_split_labels(
+        datasetfile,
+        dataloader,
+        args.eval_split
+    )
+
+
+
+    print("\nTEST RESULTS")
+
+    print("-"*80)
+
 
 
     all_metrics = []
@@ -378,7 +658,8 @@ def main():
 
         metric = binary_metrics(
             test_labels[:,i],
-            scores[:,i]
+            scores[:len(test_labels),i],
+            thresholds[TASKS[i]]
         )
 
 
@@ -389,6 +670,7 @@ def main():
 
         print(
             f"{TASKS[i]:8s} | "
+            f"THR={metric['threshold']:.3f} "
             f"ACC={metric['acc']*100:6.2f}% "
             f"BACC={metric['bacc']*100:6.2f}% "
             f"F1={metric['f1']*100:6.2f}% "
@@ -400,10 +682,8 @@ def main():
 
     print("-"*80)
 
-
-
     print(
-        "OVERALL (27 attributes)"
+        "OVERALL (27 ATTRIBUTES)"
     )
 
 
@@ -418,7 +698,7 @@ def main():
     ]:
 
 
-        mean_value = np.mean(
+        value = np.mean(
             [
                 m[key]
                 for m in all_metrics
@@ -428,11 +708,13 @@ def main():
 
         print(
             f"Mean {key.upper():10s}: "
-            f"{mean_value*100:6.2f}%"
+            f"{value*100:6.2f}%"
         )
 
 
+
     print("="*80)
+
 
 
 

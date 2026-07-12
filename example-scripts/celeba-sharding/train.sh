@@ -46,7 +46,7 @@ for label in "${scenarios[@]}"; do
             --container celeba \
             --shard "${i}" \
             --label "${label}" \
-            --dataset datasets/celebA/datasetfile_celeba \
+            --dataset datasets/celebA/datasetfile_multitask \
             --slices ${SLICES} \
             --epochs ${EPOCHS} \
             --batch_size ${BATCH_SIZE} \
