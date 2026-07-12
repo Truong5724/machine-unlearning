@@ -1,76 +1,73 @@
-#!/usr/bin/env bash
-# predict.sh - Predict CelebA multitask test set per shard
+#!/bin/bash
+# predict_celeba.sh - Predict CelebA Multitask
 
 set -euo pipefail
 IFS=$'\n\t'
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "${ROOT_DIR}"
-PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
-
-if [[ $# -lt 1 ]]; then
-    echo "Usage: $0 <number_of_shards> [label]"
-    echo "Example: $0 5 0"
-    exit 1
-fi
-
-shards="$1"
-label="${2:-0}"
-BATCH_SIZE=128
-
-LOG_FILE="containers/celeba/prediction.log"
-echo "Prediction started at $(date)" > "${LOG_FILE}"
+shards=$1
+label=${2:-0}
+container=${3:-celeba}
+dataset=${4:-datasets/celebA/datasetfile_celeba}
+batch_size=${5:-128}
 
 echo "======================================================================"
-echo "CELEBA MULTITASK PREDICTION"
+echo "PREDICT CELEBA MULTITASK"
 echo "======================================================================"
 echo "Shards     : ${shards}"
 echo "Label      : ${label}"
-echo "Batch size : ${BATCH_SIZE}"
+echo "Container  : ${container}"
+echo "Dataset    : ${dataset}"
+echo "Batch size : ${batch_size}"
 echo "======================================================================"
+
+LOG_FILE="containers/${container}/prediction.log"
+echo "Prediction started at $(date)" > "${LOG_FILE}"
 
 start_time=$(date +%s)
 
-for i in $(seq 0 $((shards - 1))); do
-    checkpoint="containers/celeba/cache/shard-${i}:${label}.pt"
-    output_file="containers/celeba/outputs/shard-${i}:${label}.npy"
+for ((i=0;i<shards;i++)); do
+
+    checkpoint="containers/${container}/cache/shard-${i}:${label}.pt"
+    output_file="containers/${container}/outputs/shard-${i}:${label}.npy"
+
+    if [[ ! -f "${checkpoint}" ]]; then
+        echo "❌ Missing checkpoint: ${checkpoint}"
+        exit 1
+    fi
 
     if [[ -f "${output_file}" ]]; then
         echo "✅ Skip existing output: ${output_file}"
         continue
     fi
 
-    if [[ ! -f "${checkpoint}" ]]; then
-        echo "❌ Missing checkpoint: ${checkpoint}"
-        echo "   Run train.sh first."
-        exit 1
-    fi
-
     echo ""
-    echo "→ Predicting shard ${i}/${shards}"
+    echo "=============================================================="
+    echo "Predicting shard ${i}/${shards}"
+    echo "=============================================================="
 
-    "${PYTHON_BIN}" sisa_celebA_multitask.py \
+    python sisa_celebA_multitask.py \
         --test \
-        --container "celeba" \
-        --dataset "datasets/celebA/datasetfile_multitask" \
+        --container "${container}" \
+        --dataset "${dataset}" \
         --shard "${i}" \
         --label "${label}" \
-        --batch_size "${BATCH_SIZE}" \
+        --batch_size "${batch_size}" \
         2>&1 | tee -a "${LOG_FILE}"
 
     if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
-        echo "❌ Error predicting shard ${i}"
+        echo "❌ Prediction failed on shard ${i}"
         exit 1
     fi
 done
 
 end_time=$(date +%s)
-elapsed=$((end_time - start_time))
+elapsed=$((end_time-start_time))
 
 echo ""
 echo "======================================================================"
-echo "✅ Prediction completed"
-echo "Elapsed: $((elapsed / 60))m $((elapsed % 60))s"
-echo "Outputs: containers/celeba/outputs/"
-echo "Log file: ${LOG_FILE}"
+echo "✅ ALL PREDICTIONS COMPLETED"
+echo "======================================================================"
+echo "Elapsed : $((elapsed/60))m $((elapsed%60))s"
+echo "Outputs : containers/${container}/outputs/"
+echo "Log     : ${LOG_FILE}"
 echo "======================================================================"
