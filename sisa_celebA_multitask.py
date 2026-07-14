@@ -11,18 +11,15 @@ from torch.nn import CrossEntropyLoss
 from torch.optim import Adam, SGD
 from tqdm import tqdm
 
-
 from architectures.celebA_multitask import CelebAMultiTaskModel
 from aggregation_multitask_celebA import binary_metrics
 from sharded import getShardHash, sizeOfShard
-
 
 NUM_ATTRIBUTES = 27
 TASKS = [
     f"attr_{i}"
     for i in range(NUM_ATTRIBUTES)
 ]
-
 
 # ==========================================================
 # LOAD DATASET
@@ -33,7 +30,6 @@ def load_dataset_config(datasetfile_path):
     with open(datasetfile_path,"r") as f:
         datasetfile=json.load(f)
 
-
     module_name=".".join(
         datasetfile_path.replace("\\","/")
         .split("/")[:-1]
@@ -43,15 +39,11 @@ def load_dataset_config(datasetfile_path):
         ]
     )
 
-
     dataloader=importlib.import_module(
         module_name
     )
 
-
     return datasetfile,dataloader
-
-
 
 # ==========================================================
 # FETCH TRAIN BATCH
@@ -67,28 +59,22 @@ def fetch_celeba_batch(
         until=None
 ):
 
-
     shards=np.load(
         f"containers/{container}/splitfile.npy",
         allow_pickle=True
     )
-
 
     requests=np.load(
         f"containers/{container}/requestfile:{label}.npy",
         allow_pickle=True
     )
 
-
     _,dataloader=load_dataset_config(dataset)
-
 
     if until is None or until > len(shards[shard]):
         until=len(shards[shard])
 
-
     limit=offset
-
 
     while limit <= until-batch_size:
 
@@ -99,12 +85,10 @@ def fetch_celeba_batch(
 
         limit+=batch_size
 
-
         indices=np.setdiff1d(
             idx_range,
             requests[shard]
         )
-
 
         if len(indices)>0:
 
@@ -112,8 +96,6 @@ def fetch_celeba_batch(
                 indices,
                 category="train"
             )
-
-
 
     if limit < until:
 
@@ -122,16 +104,12 @@ def fetch_celeba_batch(
             requests[shard]
         )
 
-
         if len(indices)>0:
 
             yield dataloader.load(
                 indices,
                 category="train"
             )
-
-
-
 # ==========================================================
 # OPTIMIZER
 # ==========================================================
@@ -149,7 +127,6 @@ def make_optimizer(
             lr=lr
         )
 
-
     elif name=="sgd":
 
         return SGD(
@@ -158,7 +135,6 @@ def make_optimizer(
             momentum=0.9,
             weight_decay=1e-4
         )
-
 
     raise ValueError(
         "optimizer not supported"
@@ -178,13 +154,11 @@ def multitask_loss(
 
     loss=0
 
-
     for i in range(NUM_ATTRIBUTES):
 
         logits=outputs[
             TASKS[i]
         ]
-
 
         y=torch.from_numpy(
             labels[:,i]
@@ -192,12 +166,10 @@ def multitask_loss(
             logits.device
         )
 
-
         loss += loss_fns[i](
             logits,
             y
         )
-
 
     return loss
 # ==========================================================
@@ -210,11 +182,9 @@ def train(args):
         args.dataset
     )
 
-
     input_shape = tuple(
         datasetfile["input_shape"]
     )
-
 
     device=torch.device(
         "cuda:0"
@@ -222,20 +192,16 @@ def train(args):
         else "cpu"
     )
 
-
     model=CelebAMultiTaskModel(
         input_shape=input_shape,
         dropout_rate=args.dropout_rate,
         num_attributes=NUM_ATTRIBUTES
     ).to(device)
 
-
-
     shard_size=sizeOfShard(
         args.container,
         args.shard
     )
-
 
     if shard_size==0:
         print(
@@ -243,13 +209,10 @@ def train(args):
         )
         return
 
-
-
     slice_size=max(
         1,
         shard_size//args.slices
     )
-
 
     avg_epochs_per_slice = (
         2*args.slices
@@ -261,13 +224,10 @@ def train(args):
         args.slices
     )
 
-
-
     loss_fns=[
         CrossEntropyLoss()
         for _ in range(NUM_ATTRIBUTES)
     ]
-
 
     optimizer=make_optimizer(
         model,
@@ -275,18 +235,13 @@ def train(args):
         args.learning_rate
     )
 
-
     loaded=False
     elapsed_time=0.0
-
-
 
     for sl in tqdm(
         range(args.slices),
         desc=f"Shard {args.shard}"
     ):
-
-
 
         slice_hash=getShardHash(
             args.container,
@@ -294,21 +249,15 @@ def train(args):
             args.shard,
             until=(sl+1)*slice_size
         )
-
-
-
         final_ckpt=(
             f"containers/{args.container}/cache/"
             f"{slice_hash}.pt"
         )
 
-
         final_time=(
             f"containers/{args.container}/times/"
             f"{slice_hash}.time"
         )
-
-
 
         if os.path.exists(final_ckpt):
 
@@ -319,25 +268,17 @@ def train(args):
                     f"shard-{args.shard}:{args.label}.pt"
                 )
 
-
                 if os.path.exists(link) or os.path.islink(link):
                     os.remove(link)
-
 
                 os.symlink(
                     f"{slice_hash}.pt",
                     link
                 )
 
-
             continue
 
-
-
-
         start_epoch=0
-
-
 
         slice_epochs=(
             int((sl+1)*avg_epochs_per_slice)
@@ -345,17 +286,12 @@ def train(args):
             int(sl*avg_epochs_per_slice)
         )
 
-
-
         if not loaded:
-
 
             recovery=glob(
                 f"containers/{args.container}/cache/"
                 f"{slice_hash}_*.pt"
             )
-
-
 
             if recovery:
 
@@ -366,17 +302,13 @@ def train(args):
                     )
                 )
 
-
                 start_epoch=int(
                     recovery[0]
                     .split("_")[-1]
                     .split(".")[0]
                 )
 
-
-
             elif sl>0:
-
 
                 prev_hash=getShardHash(
                     args.container,
@@ -385,12 +317,10 @@ def train(args):
                     until=sl*slice_size
                 )
 
-
                 prev_ckpt=(
                     f"containers/{args.container}/cache/"
                     f"{prev_hash}.pt"
                 )
-
 
                 if os.path.exists(prev_ckpt):
 
@@ -401,13 +331,7 @@ def train(args):
                         )
                     )
 
-
-
             loaded=True
-
-
-
-
 
         until=(
             (sl+1)*slice_size
@@ -415,11 +339,7 @@ def train(args):
             else None
         )
 
-
-
         train_time=0.0
-
-
 
         for epoch in tqdm(
             range(
@@ -429,13 +349,9 @@ def train(args):
             leave=False
         ):
 
-
             model.train()
 
-
             running_loss=0.0
-
-
 
             for images, labels in fetch_celeba_batch(
                 args.container,
@@ -450,19 +366,12 @@ def train(args):
                     images
                 ).float().to(device)
 
-
-    # ==============================
-    # Measure ONLY forward + backward
-    # ==============================
-
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
 
                 fb_start = time()
 
-
                 outputs = model(x)
-
 
                 loss = multitask_loss(
                     outputs,
@@ -470,22 +379,15 @@ def train(args):
                     loss_fns
                 )
 
-
-                optimizer.zero_grad()
-
+                optimizer.zero_gr
                 loss.backward()
-
                 optimizer.step()
-
 
                 train_time += (
                     time() - fb_start
                 )
 
                 running_loss += loss.item()
-
-
-
 
             print(
                 f"[Shard {args.shard}] "
@@ -495,9 +397,6 @@ def train(args):
                 f"time={train_time:.2f}s"
             )
 
-
-
-
             if (
                 args.chkpt_interval!=-1
                 and
@@ -506,22 +405,16 @@ def train(args):
                 args.chkpt_interval-1
             ):
 
-
                 torch.save(
                     model.state_dict(),
                     f"containers/{args.container}/cache/"
                     f"{slice_hash}_{epoch}.pt"
                 )
 
-
-
-
-
         torch.save(
             model.state_dict(),
             final_ckpt
         )
-
 
         with open(final_time,"w") as f:
 
@@ -529,38 +422,28 @@ def train(args):
                 str(train_time+elapsed_time)
             )
 
-
-
-
         if sl==args.slices-1:
-
 
             link=(
                 f"containers/{args.container}/cache/"
                 f"shard-{args.shard}:{args.label}.pt"
             )
 
-
             if os.path.exists(link) or os.path.islink(link):
                 os.remove(link)
-
 
             os.symlink(
                 f"{slice_hash}.pt",
                 link
             )
 
-
-
             time_link=(
                 f"containers/{args.container}/times/"
                 f"shard-{args.shard}:{args.label}.time"
             )
 
-
             if os.path.exists(time_link) or os.path.islink(time_link):
                 os.remove(time_link)
-
 
             os.symlink(
                 f"{slice_hash}.time",
@@ -577,11 +460,9 @@ def test(args):
         args.dataset
     )
 
-
     input_shape = tuple(
         datasetfile["input_shape"]
     )
-
 
     device=torch.device(
         "cuda:0"
@@ -589,28 +470,22 @@ def test(args):
         else "cpu"
     )
 
-
     model=CelebAMultiTaskModel(
         input_shape=input_shape,
         dropout_rate=args.dropout_rate,
         num_attributes=NUM_ATTRIBUTES
     ).to(device)
 
-
-
     ckpt=(
         f"containers/{args.container}/cache/"
         f"shard-{args.shard}:{args.label}.pt"
     )
-
 
     if not os.path.exists(ckpt):
 
         raise FileNotFoundError(
             f"Missing checkpoint: {ckpt}"
         )
-
-
 
     model.load_state_dict(
         torch.load(
@@ -619,23 +494,17 @@ def test(args):
         )
     )
 
-
     model.eval()
-
-
 
     test_indices=np.arange(
         datasetfile["nb_test"],
         dtype=np.int64
     )
 
-
     _,test_labels=dataloader.load(
         test_indices,
         category="test"
     )
-
-
 
     scores=np.zeros(
         (
@@ -645,93 +514,54 @@ def test(args):
         dtype=np.float32
     )
 
-
-
     for start in range(
         0,
         len(test_indices),
         args.batch_size
     ):
-
-
         batch_ids=test_indices[
             start:
             start+args.batch_size
         ]
-
-
-
         images,_=dataloader.load(
             batch_ids,
             category="test"
         )
-
-
-
         x=torch.from_numpy(
             images
         ).float().to(device)
-
-
-
         outputs=model(x)
-
-
-
         batch_scores=[]
 
-
         for i in range(NUM_ATTRIBUTES):
-
-
             logits=outputs[
                 TASKS[i]
             ]
-
-
-
             # lấy xác suất class 1
             prob=torch.softmax(
                 logits,
                 dim=1
             )[:,1]
-
-
-
             batch_scores.append(
                 prob.cpu().numpy()
             )
-
-
-
         batch_scores=np.stack(
             batch_scores,
             axis=1
         )
-
-
-
         scores[
             start:start+len(batch_ids)
         ]=batch_scores
-
-
-
-
 
     output_path=(
         f"containers/{args.container}/outputs/"
         f"shard-{args.shard}:{args.label}.npy"
     )
 
-
-
     np.save(
         output_path,
         scores
     )
-
-
 
     print("="*70)
     print(
@@ -743,144 +573,92 @@ def test(args):
     )
     print("="*70)
 
-
-
-
 # ==========================================================
 # MAIN
 # ==========================================================
 
-
 def main():
 
     parser=argparse.ArgumentParser()
-
-
-
     parser.add_argument(
         "--train",
         action="store_true"
     )
-
-
     parser.add_argument(
         "--test",
         action="store_true"
     )
-
-
-
     parser.add_argument(
         "--container",
         required=True
     )
-
-
     parser.add_argument(
         "--dataset",
         default=
         "datasets/celebA/datasetfile_multitask"
     )
-
-
     parser.add_argument(
         "--shard",
         type=int,
         required=True
     )
-
-
     parser.add_argument(
         "--label",
         default="0"
     )
-
-
     parser.add_argument(
         "--slices",
         type=int,
         default=1
     )
-
-
     parser.add_argument(
         "--epochs",
         type=int,
         default=20
     )
-
-
     parser.add_argument(
         "--batch_size",
         type=int,
         default=128
     )
-
-
     parser.add_argument(
         "--learning_rate",
         type=float,
         default=1e-3
     )
-
-
     parser.add_argument(
         "--optimizer",
         default="adam"
     )
-
-
     parser.add_argument(
         "--dropout_rate",
         type=float,
         default=0.3
     )
-
-
     parser.add_argument(
         "--chkpt_interval",
         type=int,
         default=5
     )
-
-
-
     args=parser.parse_args()
-
-
 
     os.makedirs(
         f"containers/{args.container}/cache",
         exist_ok=True
     )
-
-
     os.makedirs(
         f"containers/{args.container}/times",
         exist_ok=True
     )
-
-
     os.makedirs(
         f"containers/{args.container}/outputs",
         exist_ok=True
     )
 
-
-
     if args.train:
-
         train(args)
-
-
-
     if args.test:
-
         test(args)
-
-
-
-
 
 if __name__=="__main__":
 

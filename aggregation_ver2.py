@@ -29,7 +29,6 @@ CLASS_NAMES = {
     ]
 }
 
-
 def load_dataloader(dataset_path):
     with open(dataset_path, "r") as f:
         datasetfile = json.loads(f.read())
@@ -39,8 +38,6 @@ def load_dataloader(dataset_path):
     )
     dataloader = importlib.import_module(module_name)
     return datasetfile, dataloader
-
-
 
 def compute_multiclass_metrics(output_matrix, labels, class_names=None):
     preds = np.argmax(output_matrix, axis=1)
@@ -96,8 +93,6 @@ def compute_multiclass_metrics(output_matrix, labels, class_names=None):
         "class_metrics": class_metrics
     }
 
-
-
 def aggregate_task_outputs(container, label, task, shards, strategy="uniform"):
     """Simple majority vote như SISA gốc"""
 
@@ -114,9 +109,7 @@ def aggregate_task_outputs(container, label, task, shards, strategy="uniform"):
 
         outputs.append(np.load(output_path))
 
-
     outputs = np.array(outputs)
-
 
     if strategy == "uniform":
 
@@ -124,7 +117,6 @@ def aggregate_task_outputs(container, label, task, shards, strategy="uniform"):
             np.sum(outputs, axis=0),
             axis=1
         )
-
 
     elif strategy == "proportional":
 
@@ -151,42 +143,33 @@ def aggregate_task_outputs(container, label, task, shards, strategy="uniform"):
             axis=1
         )
 
-
     else:
         raise ValueError(
             f"Unsupported strategy: {strategy}"
         )
 
-
     return votes
 
 
-
 def main():
-
     parser = argparse.ArgumentParser()
-
     parser.add_argument(
         "--container",
         default="utkface"
     )
-
     parser.add_argument(
         "--label",
         required=True
     )
-
     parser.add_argument(
         "--dataset",
         default="datasets/UTKFace/datasetfile_ver2"
     )
-
     parser.add_argument(
         "--shards",
         type=int,
         default=3
     )
-
     parser.add_argument(
         "--strategy",
         default="uniform",
@@ -195,16 +178,13 @@ def main():
 
     args = parser.parse_args()
 
-
     datasetfile, dataloader = load_dataloader(args.dataset)
-
     test_indices = np.arange(datasetfile["nb_test"])
 
     _, labels = dataloader.load_multitask(
         test_indices,
         category="test"
     )
-
 
     print("=" * 70)
     print("UTKFACE MULTITASK EVALUATION (TEST SET - SISA)")
@@ -217,13 +197,8 @@ def main():
 
     print("-" * 70)
 
-
-
     all_metrics = {}
-
-
     for task in TASKS:
-
         preds = aggregate_task_outputs(
             args.container,
             args.label,
@@ -231,7 +206,6 @@ def main():
             args.shards,
             strategy=args.strategy
         )
-
 
         task_labels = np.asarray(
             labels[task],
@@ -245,12 +219,7 @@ def main():
             task_labels,
             CLASS_NAMES[task]
         )
-
-
         all_metrics[task] = metrics
-
-
-
         print(
             f"{task:6s}: "
             f"acc={metrics['acc']*100:6.2f}% | "
@@ -258,8 +227,6 @@ def main():
             f"macro-recall={metrics['macro_recall']*100:6.2f}% | "
             f"macro-f1={metrics['macro_f1']*100:6.2f}%"
         )
-
-
         print("  Class metrics:")
 
         print(metrics["class_metrics"].keys())
@@ -274,62 +241,40 @@ def main():
             )
 
         print()
-
-
-
     mean_acc = np.mean(
         [m["acc"] for m in all_metrics.values()]
     )
-
     mean_prec = np.mean(
         [m["macro_precision"] for m in all_metrics.values()]
     )
-
     mean_bacc = np.mean(
         [m["macro_recall"] for m in all_metrics.values()]
     )
-
     mean_f1 = np.mean(
         [m["macro_f1"] for m in all_metrics.values()]
     )
-
-
     print("-" * 70)
-
     print(
         f"Mean Acc       : {mean_acc*100:6.2f}%"
     )
-
     print(
         f"Mean Macro Prec: {mean_prec*100:6.2f}%"
     )
-
     print(
         f"Mean Macro Rec : {mean_bacc*100:6.2f}%"
     )
-
     print(
         f"Mean Macro F1  : {mean_f1*100:6.2f}%"
     )
-
     print("=" * 70)
-
-
-
     # Training time summary
-
     times = []
-
     for shard in range(args.shards):
-
         time_path = (
             f"containers/{args.container}/times/"
             f"shard-{shard}:{args.label}.time"
         )
-
-
         if os.path.exists(time_path):
-
             with open(time_path, "r") as f:
 
                 try:
@@ -340,14 +285,10 @@ def main():
                 except:
                     pass
 
-
     if times:
-
         print(
             f"Total training time: {np.sum(times)/60:.1f} minutes"
         )
-
-
 
 if __name__ == "__main__":
     main()
