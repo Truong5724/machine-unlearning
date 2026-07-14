@@ -7,12 +7,12 @@ Design:
 - shard 2 => task race, 5 slices: white / black / asian / indian / others
 
 Requirements:
-- Rebuild UTKFace HDF5 by running datasets/UTKFace/prepare_data_ver2.py
+- Rebuild UTKFace HDF5 by running datasets/UTKFace/prepare_data_multitask.py
   (new files include age/gender/race labels)
 
 Run:
 1) Prepare data ver2
-  python datasets/UTKFace/prepare_data_ver2.py --img_dir datasets/UTKFace/UTKFace
+  python datasets/UTKFace/prepare_data_multitask.py --img_dir datasets/UTKFace/UTKFace
 
 2) Initialize partition
    bash example-scripts/utkface-sharding/init_multitask.sh utkface 0

@@ -16,12 +16,12 @@ mkdir -p containers/utkface/{cache,times,outputs,shards}
 echo 0 > containers/utkface/times/null.time
 
 # Create shards
-python distribution_safe.py --shards "${shards}" --distribution uniform \
+python distribution_multitask.py --shards "${shards}" --distribution uniform \
     --container utkface --dataset datasets/UTKFace/datasetfile --label 0
 
 # Create requests
 for requests in 0 100 500; do
-    python distribution_safe.py --requests "${requests}" --distribution uniform \
+    python distribution_multitask.py --requests "${requests}" --distribution uniform \
         --container utkface --dataset datasets/UTKFace/datasetfile --label "${requests}"
     echo "✅ Created requestfile:${requests}.npy"
 done

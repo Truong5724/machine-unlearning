@@ -32,7 +32,7 @@ echo "✅ All outputs exist."
 
 # Test set metrics (dùng aggregation script)
 echo "📈 Computing test set metrics..."
-test_metrics=$(python aggregation_ver2.py \
+test_metrics=$(python aggregation_multitask_UTKFace.py \
   --strategy uniform \
   --container utkface \
   --shards ${shards} \

@@ -54,7 +54,7 @@ if [[ "${exclude_tune_too}" != "true" && "${exclude_tune_too}" != "false" ]]; th
   exit 1
 fi
 
-cmd=(python aggregation_ovr.py \
+cmd=(python aggregation_ovr_UTKFace.py \
   --container "${container}" \
   --label "${label}" \
   --dataset "${dataset}" \

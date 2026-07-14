@@ -25,7 +25,7 @@ mkdir -p containers/utkface/{cache,times,outputs}
 echo "📦 Creating shards and request files..."
 
 # Tạo shards (label 0 = no unlearning)
-python distribution_safe.py \
+python distribution_multitask.py \
     --shards "${shards}" \
     --distribution uniform \
     --container utkface \
@@ -34,7 +34,7 @@ python distribution_safe.py \
 
 # Tạo request files cho các scenario
 for req in 0 100 500; do
-    python distribution_safe.py \
+    python distribution_multitask.py \
         --requests "${req}" \
         --distribution uniform \
         --container utkface \

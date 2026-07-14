@@ -19,7 +19,7 @@ Luu y:
 - Model: architectures/celeba_ovr.py
 - Partition: celeba_ovr_partition.py
 - Train shard: sisa_celeba_ovr.py
-- Aggregate/eval: aggregation_celebA.py
+- Aggregate/eval: aggregation_ovr_celebA.py
 - Script data: example-scripts/celeba-sharding/data_ovr.sh
 - Script init: example-scripts/celeba-sharding/init_ovr.sh
 - Script train: example-scripts/celeba-sharding/train_ovr.sh

@@ -321,7 +321,7 @@ def main():
         "nb_test": len(test_files),
         "input_shape": [3, target_size[0], target_size[1]],
         "nb_classes": nb_classes,
-        "dataloader": "dataloader_ver2",
+        "dataloader": "dataloader_multitask",
         "task": args.task,
         "task_name": task_name,
         "storage_format": "hdf5",

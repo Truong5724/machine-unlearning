@@ -38,7 +38,7 @@ def main():
     subprocess.run(
         [
             sys.executable,
-            "distribution_safe.py",
+            "distribution_multitask.py",
             "--shards",
             str(args.shards),
             "--distribution",
@@ -58,7 +58,7 @@ def main():
         subprocess.run(
             [
                 sys.executable,
-                "distribution_safe.py",
+                "distribution_multitask.py",
                 "--requests",
                 str(n_requests),
                 "--distribution",

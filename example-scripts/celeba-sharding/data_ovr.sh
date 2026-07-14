@@ -36,7 +36,7 @@ if [[ -n "${save_json}" ]]; then
 fi
 echo "======================================================================"
 
-cmd=(python aggregation_celebA.py
+cmd=(python aggregation_ovr_celebA.py
   --container "${container}"
   --dataset "${dataset}"
   --split "${split}"

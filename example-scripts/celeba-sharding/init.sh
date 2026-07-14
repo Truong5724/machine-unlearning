@@ -25,7 +25,7 @@ mkdir -p containers/celeba/{cache,times,outputs}
 
 # Partition
 echo "📊 Running partition ${samples} samples..."
-python partition_celebA.py \
+python celebA_multitask_partition.py \
     --container celeba \
     --dataset "$DATASET_FILE" \
     --slices_per_shard "${shards}" \
@@ -42,7 +42,7 @@ np.save("containers/celeba/requestfile:0.npy", np.array(requests, dtype=object))
 print("✅ Created requestfile:0")
 EOF
     else
-        python distribution_safe.py \
+        python distribution_multitask.py \
             --requests "${req}" \
             --distribution uniform \
             --container celeba \
