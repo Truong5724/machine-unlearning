@@ -297,7 +297,6 @@ def train(args):
             if os.path.exists(time_link) or os.path.islink(time_link):
                 os.remove(time_link)
             os.symlink(f"{slice_hash}.time", time_link)
-    print(f"[Shard {args.shard}][Label {args.label}] Total training time: {total_time:.2f}s")
 
 @torch.no_grad()
 def test(args):

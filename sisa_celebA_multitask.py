@@ -475,19 +475,12 @@ def train(args):
 
                 loss.backward()
 
-
-                if torch.cuda.is_available():
-                    torch.cuda.synchronize()
+                optimizer.step()
 
 
                 train_time += (
                     time() - fb_start
                 )
-
-
-                # optimizer update không tính thời gian
-                optimizer.step()
-
 
                 running_loss += loss.item()
 
