@@ -445,14 +445,28 @@ if args.test:
     # Compute predictions batch per batch.
     outputs = np.empty((0, nb_classes))
 
+    inference_time = 0.0
+
     with torch.no_grad():
         for images, _ in fetchTestBatch(args.dataset, args.batch_size):
             # Convert data to torch format and send to selected device.
             gpu_images = torch.from_numpy(images).to(device)  # pylint: disable=no-member
 
+            # Sync trước khi inference
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+
+            # Actual batch prediction.
+            start_inference_time = time()
+            logits = model(gpu_images)
+
+            # Sync sau khi inference  
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+
+            inference_time += time() - start_inference_time
+
             if args.output_type == "softmax":
-                # Actual batch prediction.
-                logits = model(gpu_images)
                 predictions = softmax(logits, dim=1).to("cpu")  # Send back to cpu.
 
                 # Convert back to numpy and concatenate with previous batches.
@@ -460,12 +474,13 @@ if args.test:
 
             else:
                 # Actual batch prediction.
-                logits = model(gpu_images)
                 predictions = torch.argmax(logits, dim=1)  # pylint: disable=no-member
 
                 # Convert to one hot, send back to cpu, convert back to numpy and concatenate with previous batches.
                 out = one_hot(predictions, nb_classes).to("cpu")
                 outputs = np.concatenate((outputs, out.numpy()))
+
+    print("Inference time: {:.4f}".format(inference_time))
 
     # Save outputs in numpy format.
     outputs = np.array(outputs)
