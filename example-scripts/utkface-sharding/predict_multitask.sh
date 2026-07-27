@@ -6,7 +6,16 @@ IFS=$'\n\t'
 
 if [ $# -eq 0 ]; then
     echo "Usage: $0 <number_of_shards> [label]"
-    echo "Example: $0 5 0"
+    echo ""
+    echo "Examples:"
+    echo "  Random unlearning:"
+    echo "    $0 5 100"
+    echo ""
+    echo "  Forget Female:"
+    echo "    $0 5 forget_gender_0"
+    echo ""
+    echo "  Forget Male:"
+    echo "    $0 5 forget_gender_1"
     exit 1
 fi
 

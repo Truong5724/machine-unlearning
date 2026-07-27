@@ -44,7 +44,7 @@ echo "${test_metrics}"
 
 # Unlearn accuracy trên forgot set
 unlearn_acc="N/A"
-if [[ "${label}" != "0" ]]; then
+if [[ "${label}" == forget_* || "${label}" =~ ^[0-9]+$ && "${label}" != "0" ]]; then
   echo "📉 Computing accuracy on forgotten set..."
   unlearn_output=$(python example-scripts/utkface-sharding/evaluate_forgot.py \
     --container utkface \

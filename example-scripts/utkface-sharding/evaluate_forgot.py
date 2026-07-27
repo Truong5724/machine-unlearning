@@ -14,6 +14,26 @@ from torch.nn.functional import softmax
 
 TASKS = ("gender", "age", "race")
 NUM_CLASSES = {"gender": 2, "age": 3, "race": 5}
+CLASS_NAMES = {
+    "gender": {
+        0: "Female",
+        1: "Male",
+    },
+
+    "age": {
+        0: "Young (0-17)",
+        1: "Adult (18-59)",
+        2: "Senior (60+)",
+    },
+
+    "race": {
+        0: "White",
+        1: "Black",
+        2: "Asian",
+        3: "Indian",
+        4: "Others",
+    }
+}
 
 
 def load_dataset(dataset_path):
@@ -70,7 +90,9 @@ def get_training_time(container, label):
     """Tính tổng training time từ các file .time"""
     total = 0.0
     import glob
-    time_files = glob.glob(f"containers/{container}/times/shard-*:${label}.time")
+    time_files = glob.glob(
+        f"containers/{container}/times/shard-*:{label}.time"
+    )
     for f in time_files:
         try:
             with open(f, 'r') as file:
@@ -108,6 +130,59 @@ def main():
 
     print(f"✅ Đã kết nối dataset: Train={datasetfile.get('nb_train', 'N/A')}, Test={datasetfile.get('nb_test', 'N/A')}")
     print(f"📊 Forgot samples: {len(all_forgot)}")
+    # Decode class unlearning information
+    forget_task = None
+    forget_classes = []
+
+    if args.label.startswith("forget_"):
+
+        parts = args.label.split("_")
+
+        # format:
+        # forget_gender_0
+        # forget_age_0_2
+        # forget_race_1_2
+
+        if len(parts) >= 3:
+            forget_task = parts[1]
+            forget_classes = [
+                int(x) for x in parts[2:]
+            ]
+
+            print("\n================ FORGET INFO ================")
+            print(
+                f"Forgot task : {forget_task}"
+            )
+            print(
+                "Forgot class:"
+            )
+            for cls in forget_classes:
+
+                name = CLASS_NAMES.get(
+                    forget_task,
+                    {}
+                ).get(
+                    cls,
+                    f"Unknown({cls})"
+                )
+                print(
+                    f"  - {cls}: {name}"
+                )
+            print(
+                "=============================================="
+            )
+    if args.label.startswith("forget_"):
+
+        parts = args.label.split("_")
+
+        forget_task = parts[1]
+
+        forget_classes = parts[2:]
+
+        print("\n================ FORGET INFO ================")
+        print(f"Forgot task   : {forget_task}")
+        print(f"Forgot class  : {forget_classes}")
+        print("==============================================")
 
     # Training time
     train_time = get_training_time(args.container, args.label)
@@ -155,15 +230,73 @@ def main():
         task_metrics[task] = compute_metrics(y_true, preds, NUM_CLASSES[task])
 
     if task_metrics:
-        mean_acc = np.mean([m["acc"] for m in task_metrics.values()])
-        mean_bacc = np.mean([m["bacc"] for m in task_metrics.values()])
-        mean_f1 = np.mean([m["f1"] for m in task_metrics.values()])
-        mean_recall = np.mean([m["recall"] for m in task_metrics.values()])
-        mean_precision = np.mean([m["precision"] for m in task_metrics.values()])
 
-        print(f"{mean_acc:.4f}, {mean_bacc:.4f}, {mean_f1:.4f}, {mean_recall:.4f}, {mean_precision:.4f}")
+        print("\n================ FORGOT SET METRICS ================")
+        if forget_task is not None:
+            print(
+                f"Forgot task: {forget_task}"
+            )
+            print(
+                "Forgot classes:"
+            )
+            for cls in forget_classes:
+                print(
+                    f"  {CLASS_NAMES[forget_task][cls]}"
+                )
+        print()
+
+        for task, metrics in task_metrics.items():
+            print(
+                f"{task.upper():8s} | "
+                f"ACC={metrics['acc']*100:.2f}% "
+                f"BACC={metrics['bacc']*100:.2f}% "
+                f"F1={metrics['f1']*100:.2f}% "
+                f"RECALL={metrics['recall']*100:.2f}% "
+                f"PREC={metrics['precision']*100:.2f}%"
+            )
+        print("====================================================")
+        # Mean multitask metric
+        mean_acc = np.mean(
+            [m["acc"] for m in task_metrics.values()]
+        )
+
+        mean_bacc = np.mean(
+            [m["bacc"] for m in task_metrics.values()]
+        )
+
+        mean_f1 = np.mean(
+            [m["f1"] for m in task_metrics.values()]
+        )
+
+        mean_recall = np.mean(
+            [m["recall"] for m in task_metrics.values()]
+        )
+
+        mean_precision = np.mean(
+            [m["precision"] for m in task_metrics.values()]
+        )
+        print("\n================ SUMMARY ================")
+        print(
+            f"Mean ACC       : {mean_acc*100:.2f}%"
+        )
+        print(
+            f"Mean BACC      : {mean_bacc*100:.2f}%"
+        )
+        print(
+            f"Mean F1        : {mean_f1*100:.2f}%"
+        )
+        print(
+            f"Mean Recall    : {mean_recall*100:.2f}%"
+        )
+        print(
+            f"Mean Precision : {mean_precision*100:.2f}%"
+        )
+
+        print("==========================================")
     else:
-        print("0.0000, 0.0000, 0.0000, 0.0000, -1.0000")
+        print(
+            "0.0000, 0.0000, 0.0000, 0.0000, -1.0000"
+        )
 
 
 if __name__ == "__main__":

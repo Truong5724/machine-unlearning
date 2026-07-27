@@ -5,11 +5,21 @@ set -eou pipefail
 IFS=$'\n\t'
 
 if [ $# -eq 0 ]; then
-    echo "Usage: $0 <number_of_shards>"
+    echo "Usage:"
+    echo "  $0 <number_of_shards>"
+    echo ""
+    echo "Examples:"
+    echo "  Random scenarios:"
+    echo "    $0 5"
+    echo ""
+    echo "  Class unlearning:"
+    echo "    $0 5 forget_gender_0"
+    echo "    $0 5 forget_gender_1"
     exit 1
 fi
 
 shards=$1
+label=${2:-}
 
 # ===============================
 # Cấu hình
@@ -21,7 +31,11 @@ OPTIMIZER=adam
 CHKPT_INTERVAL=5
 SLICES=1
 
-scenarios=(0 100 500)
+if [[ -n "${label}" ]]; then
+    scenarios=("${label}")
+else
+    scenarios=(0 100 500)
+fi
 
 echo "================================================================="
 echo "🚀 TRAINING SISA UTKFace MULTITASK"
@@ -87,7 +101,7 @@ echo "🎉 ALL TRAINING COMPLETED!"
 echo "Total time : $((total_time/3600))h $(( (total_time%3600)/60 ))m"
 echo "================================================================="
 echo "Next: Evaluate with"
-echo "   python evaluate.py --container utkface --label 0"
-echo "   python evaluate.py --container utkface --label 100"
-echo "   python evaluate.py --container utkface --label 500"
-echo "================================================================="
+for label in "${scenarios[@]}"; do
+    echo "   ./predict.sh ${shards} ${label}"
+    echo "   ./data.sh ${shards} ${label}"
+done
