@@ -20,9 +20,9 @@ fi
 
 shards=$1
 
-# Optional class unlearning parameters
-unlearn_task=${2:-}
-unlearn_classes=${3:-}
+# Có thể truyền nhiều điều kiện:
+# gender:0 age:2 race:1,3
+conditions=("${@:2}")
 
 
 echo "================================================================="
@@ -61,29 +61,39 @@ python distribution_multitask.py \
 # ==========================================================
 
 
-if [[ -n "${unlearn_task}" && -n "${unlearn_classes}" ]]; then
+if [[ ${#conditions[@]} -gt 0 ]]; then
 
-    echo "🎯 Class unlearning mode"
-    echo "Task   : ${unlearn_task}"
-    echo "Class  : ${unlearn_classes}"
+    echo "🎯 Multi-task class unlearning"
 
+    python_args=()
 
-    # convert "0 1" -> arguments 0 1
-    class_args=(${unlearn_classes})
+    label="forget"
 
+    for cond in "${conditions[@]}"; do
+
+        task="${cond%%:*}"
+        classes="${cond##*:}"
+
+        label="${label}_${task}_${classes//,/_}"
+
+        python_args+=(
+            --unlearn
+            "${task}:${classes}"
+        )
+
+        echo "  ${task} -> ${classes}"
+
+    done
 
     python distribution_multitask.py \
         --requests 1 \
         --distribution uniform \
         --container utkface \
         --dataset datasets/UTKFace/datasetfile_ver2 \
-        --label forget_${unlearn_task}_${unlearn_classes// /_} \
-        --unlearn_task "${unlearn_task}" \
-        --unlearn_class "${class_args[@]}"
-
+        --label "${label}" \
+        "${python_args[@]}"
 
     echo "✅ Created class unlearning request"
-
 
 else
 

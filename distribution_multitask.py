@@ -33,16 +33,10 @@ parser.add_argument(
 )
 parser.add_argument("--label", default="latest", help="Label, default latest")
 parser.add_argument(
-    "--unlearn_task",
-    choices=["gender","age","race"],
-    default=None,
-)
-parser.add_argument(
-    "--unlearn_class",
-    type=int,
+    "--unlearn",
     nargs="+",
     default=None,
-    help="List of class labels to unlearn",
+    help="Examples: gender:0 age:2 race:1,4",
 )
 args = parser.parse_args()
 
@@ -138,45 +132,51 @@ if args.requests is not None:
     else:
         partition = np.load(f"containers/{args.container}/splitfile.npy", allow_pickle=True)
 
-        if args.unlearn_class is not None:
+        if args.unlearn is not None:
+
             dataset_dir = os.path.dirname(args.dataset)
             sys.path.insert(0, dataset_dir)
+
             dataloader_module = __import__(datasetfile["dataloader"])
 
-            all_indices = np.arange(0, datasetfile["nb_train"])
-            # Giả sử dataloader có hàm load trả về (X, y) với y là class chính
+            all_indices = np.arange(datasetfile["nb_train"])
+
             _, labels = dataloader_module.load_multitask(
                 all_indices,
                 category="train",
             )
 
-            y_train = labels[args.unlearn_task]
-
-            available_classes = np.unique(y_train)
-
             all_requests = np.array([], dtype=np.int64)
 
-            for class_label in args.unlearn_class:
+            for rule in args.unlearn:
 
-                if class_label not in available_classes:
-                    raise ValueError(
-                        f"Class {class_label} not found in {args.unlearn_task}. "
-                        f"Available classes: {available_classes}"
+                task, cls_string = rule.split(":")
+
+                classes = [
+                    int(x)
+                    for x in cls_string.split(",")
+                ]
+
+                y_train = labels[task]
+
+                for cls in classes:
+
+                    idx = np.where(y_train == cls)[0]
+
+                    all_requests = np.concatenate(
+                        (
+                            all_requests,
+                            idx,
+                        )
                     )
 
-                class_indices = np.where(
-                    y_train == class_label
-                )[0]
-
-                all_requests = np.concatenate(
-                    (
-                        all_requests,
-                        class_indices
+                    print(
+                        f"{task} class {cls}: {len(idx)} samples"
                     )
-                )
 
             all_requests = np.unique(all_requests)
-            print(f"✅ Unlearning {len(all_requests)} samples from classes {args.unlearn_class}")
+
+            print(f"\nTotal forgot samples: {len(all_requests)}")
         else:
             np.random.seed(1)
             if args.distribution.split(":")[0] == "exponential":
