@@ -177,7 +177,9 @@ def main():
 
         forget_task = parts[1]
 
-        forget_classes = parts[2:]
+        forget_classes = [
+          int(x) for x in parts[2:]
+        ]
 
         print("\n================ FORGET INFO ================")
         print(f"Forgot task   : {forget_task}")

@@ -10,8 +10,8 @@ NUM_CLASSES = {"gender": 2, "age": 3, "race": 5}
 
 CLASS_NAMES = {
     "gender": [
-        "Male",
-        "Female"
+        "Female",
+        "Male"
     ],
 
     "age": [
