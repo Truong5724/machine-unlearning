@@ -339,12 +339,32 @@ def test(args):
     eval_indices = np.arange(nb_eval, dtype=np.int64)
 
     outputs = []
-    for batch_ids in iter_batches(eval_indices, args.batch_size, shuffle=False):
-        images, _ = dataloader.load_ovr(batch_ids, category=args.eval_split)
-        x = torch.from_numpy(images).to(device)
-        logits = model.forward_task(x, task)
-        probs = torch.sigmoid(logits).to("cpu").numpy()  # (B,)
-        outputs.append(probs.reshape(-1, 1))
+
+    # Inference time
+    inference_time = 0.0
+
+    with torch.no_grad():
+        for batch_ids in iter_batches(eval_indices, args.batch_size, shuffle=False):
+            images, _ = dataloader.load_ovr(batch_ids, category=args.eval_split)
+            x = torch.from_numpy(images).to(device)
+
+            # Đồng bộ trước khi inference
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+
+            start_inference_time = time()
+            logits = model.forward_task(x, task)
+
+            # Đồng bộ sau khi inference
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+
+            inference_time += time() - start_inference_time
+
+            probs = torch.sigmoid(logits).to("cpu").numpy()  # (B,)
+            outputs.append(probs.reshape(-1, 1))
+
+    print("Inference time: {:.4f}".format(inference_time))
 
     if outputs:
         out_mat = np.concatenate(outputs, axis=0)  # (N,1)
@@ -360,7 +380,6 @@ def test(args):
         )
     np.save(out_path, out_mat)
     print(f"Saved outputs: {out_path}")
-
 
 def main():
     parser = argparse.ArgumentParser()

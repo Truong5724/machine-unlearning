@@ -318,19 +318,37 @@ def test(args):
 
     outputs_by_task = {task: np.empty((0, NUM_CLASSES[task])) for task in TASKS}
 
-    for start in range(0, len(test_indices), args.batch_size):
-        batch_ids = test_indices[start : start + args.batch_size]
-        images, _ = dataloader.load_multitask(batch_ids, category="test")
-        x = torch.from_numpy(images).to(device)
-        logits = model(x)
+    # Inference time
+    inference_time = 0.0
 
-        for task in TASKS:
-            if args.output_type == "softmax":
-                preds = softmax(logits[task], dim=1).cpu().numpy()
-            else:
-                argmax_preds = torch.argmax(logits[task], dim=1)
-                preds = one_hot(argmax_preds, NUM_CLASSES[task]).cpu().numpy()
-            outputs_by_task[task] = np.concatenate((outputs_by_task[task], preds))
+    with torch.no_grad():
+        for start in range(0, len(test_indices), args.batch_size):
+            batch_ids = test_indices[start : start + args.batch_size]
+            images, _ = dataloader.load_multitask(batch_ids, category="test")
+            x = torch.from_numpy(images).to(device)
+
+            # Đồng bộ trước khi inference
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+
+            start_inference_time = time()
+            logits = model(x)
+
+            # Đồng bộ sau khi inference
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+
+            inference_time += time() - start_inference_time
+
+            for task in TASKS:
+                if args.output_type == "softmax":
+                    preds = softmax(logits[task], dim=1).cpu().numpy()
+                else:
+                    argmax_preds = torch.argmax(logits[task], dim=1)
+                    preds = one_hot(argmax_preds, NUM_CLASSES[task]).cpu().numpy()
+                outputs_by_task[task] = np.concatenate((outputs_by_task[task], preds))
+
+    print("Inference time: {:.4f}".format(inference_time))
 
     os.makedirs(f"containers/{args.container}/outputs", exist_ok=True)
     for task in TASKS:
